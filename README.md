@@ -113,14 +113,11 @@ text
 - PyTorch + transformers
 - XAMPP / LAMP / WAMP
 ## 🐳 Docker (Recommended)
-
-Самый быстрый способ запустить проект — через Docker.
-
 ```bash
 git clone https://github.com/ditlate0-spec/crypto-signal-bot.git
 cd crypto-signal-bot
 cp coin/telegram_sender.example.php coin/telegram_sender.php
-# Открой coin/telegram_sender.php и вставь свой TG-токен и chat_id
+open coin/telegram_sender.php - TG and chat_id
 docker compose up -d --build
 ### Steps
 
@@ -144,6 +141,7 @@ Configure Telegram
 
 bash
 cp coin/telegram_sender.example.php coin/telegram_sender.php
+
 Insert your bot token and chat ID.
 
 Set paths in online.php
@@ -153,6 +151,7 @@ Path to Python
 Database credentials
 
 Run
+
 
 text
 http://localhost/botcoin/online.php
