@@ -112,7 +112,16 @@ text
 - Python 3.11
 - PyTorch + transformers
 - XAMPP / LAMP / WAMP
+## 🐳 Docker (Recommended)
 
+Самый быстрый способ запустить проект — через Docker.
+
+```bash
+git clone https://github.com/ditlate0-spec/crypto-signal-bot.git
+cd crypto-signal-bot
+cp coin/telegram_sender.example.php coin/telegram_sender.php
+# Открой coin/telegram_sender.php и вставь свой TG-токен и chat_id
+docker compose up -d --build
 ### Steps
 
 1. **Clone the repository**

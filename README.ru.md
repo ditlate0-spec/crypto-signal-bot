@@ -79,7 +79,21 @@
 5. Скопировать `coin/telegram_sender.example.php` в `coin/telegram_sender.php` и вписать токены
 6. Настроить пути в `online.php`
 7. Открыть `http://localhost/botcoin/online.php`
+## 🐳 Docker (рекомендуется)
 
+Самый быстрый способ запустить проект.
+
+### Требования
+- Docker Desktop
+
+### Шаги
+
+```bash
+git clone https://github.com/ditlate0-spec/crypto-signal-bot.git
+cd crypto-signal-bot
+cp coin/telegram_sender.example.php coin/telegram_sender.php
+# Открой coin/telegram_sender.php и вставь свой TG-токен и chat_id
+docker compose up -d --build
 ## 🔮 Что можно улучшить
 
 - 🧠 Единый ИИ-анализатор с итоговым вердиктом (сильный рост / рост / неопределённость / падение / сильное падение)
