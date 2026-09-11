@@ -35,3 +35,6 @@ Kronos-master/__pycache__/
 # Системные
 .DS_Store
 Thumbs.db
+
+# Docker
+.env

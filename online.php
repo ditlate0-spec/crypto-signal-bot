@@ -2,9 +2,9 @@
 // ============================================
 // 1. ПОДКЛЮЧЕНИЕ К БД
 // ============================================
-$host = "localhost";
-$dbuser = "root";
-$dbpassword = "";
+$host = getenv('DB_HOST') ?: 'localhost';
+$dbuser = getenv('DB_USER') ?: 'root';
+$dbpassword = getenv('DB_PASSWORD') ?: '';
 $dbname = "volta";
 $dbarticles = "oth";
 $connection = mysqli_connect($host, $dbuser, $dbpassword, $dbname);
@@ -49,7 +49,7 @@ $crypto_news = getCryptoNewsSentiment('BTC');
 // ПОЛУЧЕНИЕ ИНДЕКСА СТРАХА И ЖАДНОСТИ
 // ============================================
 function getFearGreedIndex() {
-    $cacheFile = 'C:\\xampp\\htdocs\\botcoin\\fear_greed_cache.json';
+    $cacheFile = __DIR__ . '/fear_greed_cache.json';
     $cacheTime = 3600;
     
     if (file_exists($cacheFile) && (time() - filemtime($cacheFile)) < $cacheTime) {
@@ -126,7 +126,9 @@ function getCandlesFromBinance($symbol = 'BTCUSDT', $interval = '1h', $limit = 5
 
 function callNeuralNetworkMulti($candles_15m, $candles_1h, $candles_1d, $symbol) {
     global $connection;
-
+ file_put_contents(__DIR__ . '/python_debug.log', 
+        "\n=== " . date('Y-m-d H:i:s') . " ===\nSTART\n", 
+        FILE_APPEND);
     $payload = [];
     if (!empty($candles_15m)) $payload['15m'] = $candles_15m;
     if (!empty($candles_1h))  $payload['1h']  = $candles_1h;
@@ -138,12 +140,15 @@ function callNeuralNetworkMulti($candles_15m, $candles_1h, $candles_1d, $symbol)
 
     $data = json_encode($payload, JSON_UNESCAPED_UNICODE);
 
-    $filePath = 'C:\\xampp\\htdocs\\botcoin\\Kronos-master\\test_data.json';
+    $filePath = __DIR__ . '/Kronos-master/test_data.json';
     file_put_contents($filePath, $data);
 
-    $command = "cd C:\\xampp\\htdocs\\botcoin\\Kronos-master && py -3.11 kronos_analyzer.py 2>&1";
+$command = "cd " . __DIR__ . "/Kronos-master && HF_HOME=/tmp/hf_cache python3 kronos_analyzer.py 2>&1";
     $output = shell_exec($command);
-
+  file_put_contents(__DIR__ . '/python_debug.log', 
+        "COMMAND: $command\n" .
+        "OUTPUT: " . var_export($output, true) . "\n", 
+        FILE_APPEND);
     $output = mb_convert_encoding($output, 'UTF-8', 'UTF-8');
     $output = trim($output);
 
@@ -155,7 +160,9 @@ function callNeuralNetworkMulti($candles_15m, $candles_1h, $candles_1d, $symbol)
     if (json_last_error() !== JSON_ERROR_NONE) {
         return ['error' => 'Ошибка парсинга JSON: ' . json_last_error_msg(), 'raw' => $output];
     }
-
+  file_put_contents(__DIR__ . '/python_debug.log', 
+        "JSON decoded OK, keys: " . implode(',', array_keys($result)) . "\n", 
+        FILE_APPEND);
     if (isset($result['error'])) {
         return $result;
     }
@@ -172,14 +179,20 @@ function callNeuralNetworkMulti($candles_15m, $candles_1h, $candles_1d, $symbol)
         $json_data      = mysqli_real_escape_string($connection, json_encode($r, JSON_UNESCAPED_UNICODE));
         $created_at     = gmdate('Y-m-d H:i:s');
 
-        $query = "INSERT INTO `neural_predictions` 
+      $query = "INSERT INTO `neural_predictions` 
                   (`symbol`, `timeframe`, `signal`, `confidence`, `change_percent`, `current_price`, `future_price`, `candles_analyzed`, `json_data`, `created_at`) 
                   VALUES 
                   ('$symbol_escaped', '$tf_escaped', '$signal_escaped', 
                    '{$r['confidence']}', '{$r['change_percent']}', '{$r['current_price']}', 
                    '{$r['future_price']}', '{$r['candles_analyzed']}', '$json_data', '$created_at')";
 
-        mysqli_query($connection, $query);
+        $insert_result = mysqli_query($connection, $query);
+
+        file_put_contents(__DIR__ . '/python_debug.log', 
+            "TF: $tf\nQUERY: $query\nRESULT: " . var_export($insert_result, true) . "\n" .
+            "ERROR: " . mysqli_error($connection) . "\n", 
+            FILE_APPEND);
+
     }
 
     return $result;

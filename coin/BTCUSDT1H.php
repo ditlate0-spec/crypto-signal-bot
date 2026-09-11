@@ -5,12 +5,13 @@ require_once 'conn.php';
 // ПОДКЛЮЧЕНИЕ К БД
 // ============================================
 
-$host = "localhost";
-$dbuser = "root";
-$dbpassword = "";
-$dbname = "volta";
+$host = getenv('DB_HOST') ?: 'localhost';
+$dbuser = getenv('DB_USER') ?: 'root';
+$dbpassword = getenv('DB_PASSWORD') ?: '';
+$dbname = getenv('DB_NAME') ?: 'volta';
 $dbarticles = "oth";
 $connection = mysqli_connect($host, $dbuser, $dbpassword, $dbname);
+
 
 // ============================================
 // ОПТИМАЛЬНЫЕ ПОРОГИ ДЛЯ 1H (ВЕРСИЯ 3.0)

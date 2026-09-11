@@ -1,0 +1,37 @@
+# ============================================
+# PHP 8.2 + Apache + Python 3.11
+# Всё в одном контейнере (проще для локальной работы)
+# ============================================
+FROM php:8.2-apache
+
+# Установка системных зависимостей
+RUN apt-get update && apt-get install -y \
+    python3 \
+    python3-pip \
+    python3-venv \
+    libcurl4-openssl-dev \
+    libzip-dev \
+    unzip \
+    git \
+    curl \
+    && docker-php-ext-install mysqli curl zip \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Установка Python-библиотек
+COPY Kronos-master/requirements.txt /tmp/requirements.txt
+RUN pip3 install --no-cache-dir --break-system-packages -r /tmp/requirements.txt
+
+# Включаем mod_rewrite
+RUN a2enmod rewrite
+
+# Рабочая директория
+WORKDIR /var/www/html
+
+# Копируем проект
+COPY . /var/www/html/
+
+# Права
+RUN chown -R www-data:www-data /var/www/html
+
+EXPOSE 80

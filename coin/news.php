@@ -4,7 +4,7 @@
 // ============================================
 
 function getCryptoNewsSentiment($asset = 'BTC') {
-    $cacheFile = 'C:\\xampp\\htdocs\\botcoin\\news_cache_' . $asset . '.json';
+    $cacheFile = __DIR__ . '/../news_cache_' . $asset . '.json';
     $cacheTime = 1800;
     
     if (file_exists($cacheFile) && (time() - filemtime($cacheFile)) < $cacheTime) {
