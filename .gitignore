@@ -1,0 +1,37 @@
+# Кэши
+fear_greed_cache.json
+news_cache_*.json
+python_debug.log
+
+# Результаты бэктеста
+results_*.json
+
+# Реальные токены — НЕ ЗАЛИВАЕМ
+coin/telegram_sender.php
+.env
+
+# Папка нейросети Kronos — чужой репозиторий
+Kronos-master/*
+!Kronos-master/kronos_analyzer.py
+!Kronos-master/model/
+Kronos-master/model/*
+!Kronos-master/model/kronos.py
+!Kronos-master/model/module.py
+!Kronos-master/model/__init__.py
+
+# Данные модели
+Kronos-master/test_data.json
+Kronos-master/__pycache__/
+*.pyc
+
+# Модели (большие)
+*.pth
+*.pt
+
+# IDE
+.vscode/
+.idea/
+
+# Системные
+.DS_Store
+Thumbs.db
