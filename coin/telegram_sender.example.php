@@ -1,22 +1,12 @@
 <?php
 // ============================================
-// coin/telegram_sender.example.php
-//
-// ПРИМЕР файла отправки в Telegram.
-//
-// Как использовать:
-// 1. Скопировать в telegram_sender.php
-// 2. Заменить YOUR_BOT_TOKEN и YOUR_CHAT_ID
-// 3. Или задать переменные окружения TG_TOKEN, TG_CHAT_ID
+// coin/telegram_sender.php
 // ============================================
 
 $TOKEN   = getenv('TG_TOKEN')   ?: 'YOUR_BOT_TOKEN_HERE';
 $CHAT_ID = getenv('TG_CHAT_ID') ?: 'YOUR_CHAT_ID_HERE';
 $SYMBOL  = 'BTCUSDT';
 
-// ============================================
-// ФУНКЦИЯ ОТПРАВКИ
-// ============================================
 function tgSend($token, $chat_id, $text) {
     $url = "https://api.telegram.org/bot$token/sendMessage";
     $ch = curl_init($url);
@@ -31,9 +21,6 @@ function tgSend($token, $chat_id, $text) {
     curl_close($ch);
 }
 
-// ============================================
-// УЖЕ ОТПРАВЛЯЛИ?
-// ============================================
 function tgAlreadySent($connection, $hash) {
     $h = mysqli_real_escape_string($connection, $hash);
     $q = mysqli_query($connection, "SELECT `id` FROM `telegram_sent` 
@@ -48,51 +35,30 @@ function tgMarkSent($connection, $hash) {
         (`hash`, `sent_at`) VALUES ('$h', '$now')");
 }
 
-// ============================================
-// 0. FEAR & GREED
-// ============================================
+// Fear & Greed
 $fg_line = '';
 $fg_hash_part = '';
-
 if (isset($fear_greed) && $fear_greed && !isset($fear_greed['error'])) {
     $fgv = (int)$fear_greed['value'];
-
-    if ($fgv <= 25) {
-        $fg_txt = 'ЦЕНА ПАДАЕТ';
-        $fg_hint = 'Экстремальный страх';
-    } elseif ($fgv <= 45) {
-        $fg_txt = 'ВОЗМОЖНО ПАДАЕТ';
-        $fg_hint = 'Страх на рынке';
-    } elseif ($fgv <= 55) {
-        $fg_txt = 'НЕОПРЕДЕЛЁННОСТЬ';
-        $fg_hint = 'Рынок в боковике';
-    } elseif ($fgv <= 75) {
-        $fg_txt = 'ВОЗМОЖНО РАСТЁТ';
-        $fg_hint = 'Жадность на рынке';
-    } else {
-        $fg_txt = 'ЦЕНА РАСТЁТ';
-        $fg_hint = 'Экстремальная жадность';
-    }
-
+    if ($fgv <= 25)      { $fg_txt = 'ЦЕНА ПАДАЕТ';         $fg_hint = 'Экстремальный страх'; }
+    elseif ($fgv <= 45)  { $fg_txt = 'ВОЗМОЖНО ПАДАЕТ';     $fg_hint = 'Страх на рынке'; }
+    elseif ($fgv <= 55)  { $fg_txt = 'НЕОПРЕДЕЛЁННОСТЬ';    $fg_hint = 'Рынок в боковике'; }
+    elseif ($fgv <= 75)  { $fg_txt = 'ВОЗМОЖНО РАСТЁТ';     $fg_hint = 'Жадность на рынке'; }
+    else                 { $fg_txt = 'ЦЕНА РАСТЁТ';         $fg_hint = 'Экстремальная жадность'; }
     $fg_line = "$fg_txt — $fgv/100 ($fg_hint)";
     $fg_hash_part = 'fg_' . $fgv;
 }
 
-// ============================================
-// 0. НОВОСТИ
-// ============================================
+// Новости
 $news_lines = [];
 $news_hash_part = '';
-
 if (isset($crypto_news) && $crypto_news && !isset($crypto_news['error'])) {
     $pos = (int)$crypto_news['positive_count'];
     $neg = (int)$crypto_news['negative_count'];
     $neu = (int)$crypto_news['neutral_count'];
-
     $news_lines[] = "🟢 Позитивных: $pos";
     $news_lines[] = "🔴 Негативных: $neg";
     $news_lines[] = "⚪ Нейтральных: $neu";
-
     $news_hash_part = "news_{$pos}_{$neg}_{$neu}";
 }
 
@@ -112,6 +78,11 @@ foreach (['1d', '1h', '15m'] as $tf) {
             SELECT id, kf, data, '15m' AS tf FROM `oth_15m` WHERE Nazvanie = '$SYMBOL'
         ) AS all_signals
         WHERE tf = '$tf'
+        AND (
+            (tf = '1d'  AND DATE(`data`) = DATE(UTC_TIMESTAMP()))
+         OR (tf = '1h'  AND DATE_FORMAT(`data`, '%Y-%m-%d %H') = DATE_FORMAT(UTC_TIMESTAMP(), '%Y-%m-%d %H'))
+         OR (tf = '15m' AND `data` >= UTC_TIMESTAMP() - INTERVAL 15 MINUTE)
+        )
         ORDER BY data DESC LIMIT 1
     ");
     $label = $tf == '1d' ? '1D' : ($tf == '1h' ? '1H' : '15M');
@@ -119,7 +90,7 @@ foreach (['1d', '1h', '15m'] as $tf) {
         $kf_lines[] = "$label: " . round($row['kf'], 1) . "%";
         $kf_hash_parts[] = "kf_" . $tf . "_" . $row['id'];
     } else {
-        $kf_lines[] = "$label: —";
+        $kf_lines[] = "$label: 🟢 шанс маленький";
     }
 }
 
@@ -132,6 +103,11 @@ $neural_hash_parts = [];
 foreach (['1d', '1h', '15m'] as $tf) {
     $q = mysqli_query($connection, "SELECT * FROM `neural_predictions` 
         WHERE `symbol` = '$SYMBOL' AND `timeframe` = '$tf' 
+        AND (
+            (timeframe = '1d'  AND DATE(`created_at`) = DATE(UTC_TIMESTAMP()))
+         OR (timeframe = '1h'  AND DATE_FORMAT(`created_at`, '%Y-%m-%d %H') = DATE_FORMAT(UTC_TIMESTAMP(), '%Y-%m-%d %H'))
+         OR (timeframe = '15m' AND `created_at` >= UTC_TIMESTAMP() - INTERVAL 15 MINUTE)
+        )
         ORDER BY `created_at` DESC LIMIT 1");
     $label = $tf == '1d' ? '1D' : ($tf == '1h' ? '1H' : '15M');
 
@@ -145,7 +121,7 @@ foreach (['1d', '1h', '15m'] as $tf) {
             continue;
         }
     }
-    $neural_lines[] = "$label: —";
+    $neural_lines[] = "$label: 🟢 шанс маленький";
 }
 
 // ============================================
@@ -167,6 +143,11 @@ foreach (['BTCUSDT', 'ETHUSDT'] as $sym) {
                 SELECT id, kf, text, created_at, '15m' AS tf FROM `old_bot_signals_15m` WHERE symbol = '$sym'
             ) AS all_signals
             WHERE tf = '$tf'
+            AND (
+                (tf = '1d'  AND DATE(`created_at`) = DATE(UTC_TIMESTAMP()))
+             OR (tf = '1h'  AND DATE_FORMAT(`created_at`, '%Y-%m-%d %H') = DATE_FORMAT(UTC_TIMESTAMP(), '%Y-%m-%d %H'))
+             OR (tf = '15m' AND `created_at` >= UTC_TIMESTAMP() - INTERVAL 15 MINUTE)
+            )
             ORDER BY created_at DESC LIMIT 1
         ");
         $label = $tf == '1d' ? '1D' : ($tf == '1h' ? '1H' : '15M');
@@ -175,7 +156,7 @@ foreach (['BTCUSDT', 'ETHUSDT'] as $sym) {
             $old_block_lines[] = "$label: " . round($row['kf'], 1) . "% — " . $row['text'];
             $old_hash_parts[] = "old_{$sym}_{$tf}_" . $row['id'];
         } else {
-            $old_block_lines[] = "$label: —";
+            $old_block_lines[] = "$label: 🟢 шанс маленький";
         }
     }
     $old_block_lines[] = "";
