@@ -220,34 +220,73 @@ function getLastPrediction($symbol, $timeframe) {
     }
     return null;
 }
-
 // ============================================
-// 6. ВЫПОЛНЯЕМ ОТПРАВКУ — С КЭШЕМ ПО ТАЙМФРЕЙМАМ
+// 6. ВЫПОЛНЯЕМ ОТПРАВКУ — С КАЛЕНДАРНЫМ КЭШЕМ (UTC)
 // ============================================
 $symbol = 'BTCUSDT';
 $neural_result = null;
 
 if ($send_to_neural) {
 
-    $now_utc = gmdate('Y-m-d H:i:s');
+    // Календарные окна в UTC
+    $day_start_utc  = gmdate('Y-m-d 00:00:00');   // начало текущих суток UTC
+    $hour_start_utc = gmdate('Y-m-d H:00:00');    // начало текущего часа UTC
 
+    $minute_now = (int)gmdate('i');
+    $slot_15m   = floor($minute_now / 15) * 15;
+    $slot_15m_start = gmdate('Y-m-d H:') . str_pad($slot_15m, 2, '0', STR_PAD_LEFT) . ':00';
+
+    // --- Кэш 1h: есть ли запись с начала текущего часа UTC ---
     $check_1h = mysqli_query($connection, "SELECT `id` FROM `neural_predictions` 
         WHERE `symbol` = '$symbol' AND `timeframe` = '1h' 
-        AND `created_at` >= DATE_SUB('$now_utc', INTERVAL 1 HOUR) LIMIT 1");
+        AND `created_at` >= '$hour_start_utc' LIMIT 1");
     $need_1h = (mysqli_num_rows($check_1h) == 0);
 
+    // --- Кэш 1d: есть ли запись с начала текущих суток UTC ---
     $check_1d = mysqli_query($connection, "SELECT `id` FROM `neural_predictions` 
         WHERE `symbol` = '$symbol' AND `timeframe` = '1d' 
-        AND `created_at` >= DATE_SUB('$now_utc', INTERVAL 1 DAY) LIMIT 1");
+        AND `created_at` >= '$day_start_utc' LIMIT 1");
     $need_1d = (mysqli_num_rows($check_1d) == 0);
 
-    $candles_15m = getCandlesFromBinance($symbol, '15m', 150);
-    $candles_1h  = $need_1h ? getCandlesFromBinance($symbol, '1h', 500) : [];
-    $candles_1d  = $need_1d ? getCandlesFromBinance($symbol, '1d', 60)  : [];
+    // --- Кэш 15m: есть ли запись с начала текущей 15-минутки UTC ---
+    $check_15m = mysqli_query($connection, "SELECT `id` FROM `neural_predictions` 
+        WHERE `symbol` = '$symbol' AND `timeframe` = '15m' 
+        AND `created_at` >= '$slot_15m_start' LIMIT 1");
+    $need_15m = (mysqli_num_rows($check_15m) == 0);
 
-    $result_all = callNeuralNetworkMulti($candles_15m, $candles_1h, $candles_1d, $symbol);
+    // --- Свечи: грузим только то, что реально нужно ---
+    $candles_15m = $need_15m ? getCandlesFromBinance($symbol, '15m', 150) : [];
+    $candles_1h  = $need_1h  ? getCandlesFromBinance($symbol, '1h', 500)  : [];
+    $candles_1d  = $need_1d  ? getCandlesFromBinance($symbol, '1d', 60)   : [];
 
-    $neural_result = isset($result_all['15m']) ? $result_all['15m'] : null;
+    // --- Если всё закэшировано — не дёргаем Python ---
+    if (empty($candles_15m) && empty($candles_1h) && empty($candles_1d)) {
+        file_put_contents(__DIR__ . '/python_debug.log',
+            "\n=== " . date('Y-m-d H:i:s') . " ===\n" .
+            "ALL CACHED: 15m=$need_15m, 1h=$need_1h, 1d=$need_1d\n",
+            FILE_APPEND);
+        $neural_result = null;
+    } else {
+        file_put_contents(__DIR__ . '/python_debug.log',
+            "\n=== " . date('Y-m-d H:i:s') . " ===\n" .
+            "NEED: 15m=" . ($need_15m ? 'yes' : 'no') .
+            ", 1h=" . ($need_1h ? 'yes' : 'no') .
+            ", 1d=" . ($need_1d ? 'yes' : 'no') . "\n",
+            FILE_APPEND);
+
+        $result_all = callNeuralNetworkMulti($candles_15m, $candles_1h, $candles_1d, $symbol);
+
+        // Для отображения: приоритет 15m → 1h → 1d
+        if (!empty($result_all['15m']) && !isset($result_all['15m']['error'])) {
+            $neural_result = $result_all['15m'];
+        } elseif (!empty($result_all['1h']) && !isset($result_all['1h']['error'])) {
+            $neural_result = $result_all['1h'];
+        } elseif (!empty($result_all['1d']) && !isset($result_all['1d']['error'])) {
+            $neural_result = $result_all['1d'];
+        } else {
+            $neural_result = $result_all; // ошибка — покажем на странице
+        }
+    }
 }
 $pred_1d = getLastPrediction('BTCUSDT', '1d');
 $pred_1h = getLastPrediction('BTCUSDT', '1h');
