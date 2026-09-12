@@ -53,15 +53,14 @@ def analyze(candles_data):
 
     try:
         all_predictions = []
-        samples = 3
-
+        samples = 5
         for i in range(samples):
             pred_df = predictor.predict(
                 df=x_df,
                 x_timestamp=x_timestamp,
                 y_timestamp=y_timestamp,
                 pred_len=pred_len,
-                top_p=0.9,
+                top_p=0.05,
                 sample_count=1
             )
             all_predictions.append(float(pred_df['close'].iloc[0]))
