@@ -60,8 +60,8 @@ def analyze(candles_data):
                 x_timestamp=x_timestamp,
                 y_timestamp=y_timestamp,
                 pred_len=pred_len,
-                top_p=0.05,
-                sample_count=1
+                top_p=0.03,
+                sample_count=3
             )
             all_predictions.append(float(pred_df['close'].iloc[0]))
 
