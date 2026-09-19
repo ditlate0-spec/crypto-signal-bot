@@ -1,0 +1,11 @@
+/vendor
+/node_modules
+/.git
+/.env
+/storage/logs/*
+/storage/framework/cache/*
+/storage/framework/sessions/*
+/storage/framework/views/*
+volta_dump.sql
+volta_dump_utf8.sql
+*.log
