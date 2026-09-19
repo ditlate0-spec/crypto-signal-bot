@@ -224,19 +224,35 @@ class BinanceService
         ]);
     }
     // Trailing Stop
-    public function setTrailingStop(string $symbol, string $activationPrice, float $callbackRate): array
+  public function setTrailingStop(string $symbol, float $quantity, string $activationPrice, float $callbackRate): array
+{
+    return $this->request('POST', '/fapi/v1/algoOrder', [
+        'algoType'      => 'CONDITIONAL',
+        'symbol'        => $symbol,
+        'side'          => 'BUY',
+        'type'          => 'TRAILING_STOP_MARKET',
+        'quantity'      => $quantity,
+        'activatePrice' => $activationPrice,
+        'callbackRate'  => $callbackRate,
+        'workingType'   => 'MARK_PRICE',
+    ]);
+}
+
+    public function cancelAllAlgoOrders(string $symbol): array
     {
-        return $this->request('POST', '/fapi/v1/algoOrder', [
-            'algoType'      => 'CONDITIONAL',
-            'symbol'        => $symbol,
-            'side'          => 'BUY',
-            'type'          => 'TRAILING_STOP_MARKET',
-            'activatePrice' => $activationPrice,
-            'callbackRate'  => $callbackRate,
-            'closePosition' => 'true',
-            'workingType'   => 'MARK_PRICE',
+        return $this->request('DELETE', '/fapi/v1/algoOpenOrders', [
+            'symbol' => $symbol,
         ]);
     }
+
+    // Отменить ВСЕ открытые ордера по символу (обычные + условные + Algo)
+    public function cancelAllOpenOrders(string $symbol): array
+    {
+        return $this->request('DELETE', '/fapi/v1/allOpenOrders', [
+            'symbol' => $symbol,
+        ]);
+    }
+
     // Баланс
     public function getBalance(): array
     {

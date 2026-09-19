@@ -345,14 +345,18 @@ $candles = $this->fetchCandles();
         $trailActivatePrice = round($entryPrice * (1 - self::TRAIL_ACTIVATE_PERCENT / 100) / $tickSize) * $tickSize;
         $trailActivatePrice = number_format($trailActivatePrice, $decimals, '.', '');
 
-        $slResult = $this->binance->setStopLoss($symbol, $slPrice);
+  // Сбрасываем старые условные ордера, чтобы не было конфликта
+// Сбрасываем ВСЕ старые ордера, чтобы не было конфликта
+$this->binance->cancelAllOpenOrders($symbol);
 
+$slResult = $this->binance->setStopLoss($symbol, $slPrice);
         // Трейлинг-стоп вместо фиксированного TP
-        $tpResult = $this->binance->setTrailingStop(
-            $symbol,
-            $trailActivatePrice,
-            self::TRAIL_CALLBACK_RATE
-        );
+   $tpResult = $this->binance->setTrailingStop(
+    $symbol,
+    $quantity,
+    $trailActivatePrice,
+    self::TRAIL_CALLBACK_RATE
+);
         if (!$slResult['success']) {
             $this->telegram->send("⚠️ Шорт открыт, но SL не выставлен: " . $slResult['error']);
         }
