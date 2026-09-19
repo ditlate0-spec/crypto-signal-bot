@@ -27,9 +27,10 @@ class TradingBotService
 
     private const MARGIN        = 100;
     private const LEVERAGE      = 50;
-    private const TP_PERCENT    = 0.21;
     private const SL_PERCENT    = 0.5;
 
+    private const TRAIL_ACTIVATE_PERCENT = 0.2;
+    private const TRAIL_CALLBACK_RATE    = 0.1;
     private const MODEL_THRESHOLD = 0.85;
 
     private const TRADE_SYMBOL = 'BTCUSDT';
@@ -307,25 +308,30 @@ class TradingBotService
         if (!$order['success']) {
             return ['success' => false, 'error' => 'openShort: ' . $order['error']];
         }
-
         $entryPrice = (float)$order['data']['avgPrice'];
 
-        // Считаем SL/TP
+        // Считаем SL и цену активации трейлинга
         $decimals = (int)abs(log10($tickSize));
         $slPrice = round($entryPrice * (1 + self::SL_PERCENT / 100) / $tickSize) * $tickSize;
-        $tpPrice = round($entryPrice * (1 - self::TP_PERCENT / 100) / $tickSize) * $tickSize;
         $slPrice = number_format($slPrice, $decimals, '.', '');
-        $tpPrice = number_format($tpPrice, $decimals, '.', '');
+
+        // Активация трейлинга ниже входа (для шорта)
+        $trailActivatePrice = round($entryPrice * (1 - self::TRAIL_ACTIVATE_PERCENT / 100) / $tickSize) * $tickSize;
+        $trailActivatePrice = number_format($trailActivatePrice, $decimals, '.', '');
 
         $slResult = $this->binance->setStopLoss($symbol, $slPrice);
-        $tpResult = $this->binance->setTakeProfit($symbol, $tpPrice);
 
+        // Трейлинг-стоп вместо фиксированного TP
+        $tpResult = $this->binance->setTrailingStop(
+            $symbol,
+            $trailActivatePrice,
+            self::TRAIL_CALLBACK_RATE
+        );
         if (!$slResult['success']) {
             $this->telegram->send("⚠️ Шорт открыт, но SL не выставлен: " . $slResult['error']);
         }
         if (!$tpResult['success']) {
-            $this->telegram->send("⚠️ Шорт открыт, но TP не выставлен: " . $tpResult['error']);
-        }
+     $this->telegram->send("⚠️ Шорт открыт, но Trailing не выставлен: " . $tpResult['error']);  }
 
         // Записываем в БД
         Trade::create([
@@ -334,8 +340,8 @@ class TradingBotService
             'entry_price' => $entryPrice,
             'quantity'    => $quantity,
             'leverage'    => self::LEVERAGE,
-            'stop_loss'   => (float)$slPrice,
-            'take_profit' => (float)$tpPrice,
+              'stop_loss'   => (float)$slPrice,
+            'take_profit' => (float)$trailActivatePrice,
             'status'      => 'open',
             'opened_at'   => now('UTC'),
         ]);
@@ -349,8 +355,9 @@ class TradingBotService
             "Цена входа: $" . number_format($entryPrice, 2) . "\n" .
             "Количество: {$quantity} BTC\n" .
             "Плечо: " . self::LEVERAGE . "x\n" .
-            "SL: $" . number_format((float)$slPrice, 2) . " (+" . self::SL_PERCENT . "%)\n" .
-            "TP: $" . number_format((float)$tpPrice, 2) . " (-" . self::TP_PERCENT . "%)"
+             "SL: $" . number_format((float)$slPrice, 2) . " (+" . self::SL_PERCENT . "%)\n" .
+            "Trailing: активация $" . number_format((float)$trailActivatePrice, 2) .
+            " (-" . self::TRAIL_ACTIVATE_PERCENT . "%), откат " . self::TRAIL_CALLBACK_RATE . "%"
         );
 
         return [
@@ -358,7 +365,7 @@ class TradingBotService
             'entry_price' => $entryPrice,
             'quantity'    => $quantity,
             'sl'          => $slPrice,
-            'tp'          => $tpPrice,
+            'tp'          => $trailActivatePrice,
         ];
     }
 }
