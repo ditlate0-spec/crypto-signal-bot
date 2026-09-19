@@ -38,11 +38,17 @@ class BinanceService
         $request = Http::withHeaders(['X-MBX-APIKEY' => $this->apiKey])
             ->timeout(15);
 
-        try {
-            $response = $method === 'GET'
-                ? $request->get($url . '?' . $queryString)
-                : $request->asForm()->post($url, $this->parseQuery($queryString));
-        } catch (\Throwable $e) {
+       try {
+    if ($method === 'GET') {
+        $response = $request->get($url . '?' . $queryString);
+    } elseif ($method === 'DELETE') {
+        $response = $request->delete($url . '?' . $queryString);
+    } else {
+        $response = $request->asForm()->post($url, $this->parseQuery($queryString));
+    }
+}
+        
+        catch (\Throwable $e) {
             return ['success' => false, 'error' => $e->getMessage()];
         }
 

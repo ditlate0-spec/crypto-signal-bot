@@ -64,39 +64,13 @@ class TradingBotService
         $candleTime = gmdate('Y-m-d H:i', $candleTs);
         $signalHash = md5('trade_' . $candleTime);
 
-       if (TelegramSent::alreadySent($signalHash)) {
-    Log::info('[TradingBot] already traded this candle: ' . $candleTime);
-    return ['verdict' => $verdict, 'traded' => false, 'reason' => 'already_traded'];
-}
+        if (TelegramSent::alreadySent($signalHash)) {
+            Log::info('[TradingBot] already traded this candle: ' . $candleTime);
+            return ['verdict' => $verdict, 'traded' => false, 'reason' => 'already_traded'];
+        }
 
-// 4.5. КУЛДАУН: не чаще одной сделки в час
-$lastTrade = Trade::whereIn('status', ['open', 'closed'])
-    ->orderBy('opened_at', 'desc')
-    ->first();
-
-if ($lastTrade && $lastTrade->opened_at) {
-    $lastTs = $lastTrade->opened_at->timestamp;   // UTC
-    $nowTs  = time();
-    $diff   = $nowTs - $lastTs;
-
-    if ($diff < 3600) {
-        $leftMin = (int)ceil((3600 - $diff) / 60);
-        Log::info("[TradingBot] cooldown active: {$leftMin} min left");
-
-        $this->telegram->send(
-            "⏳ <b>СИГНАЛ ПРОПУЩЕН (КУЛДАУН)</b>\n" .
-            "Вердикт: ВХОД РАЗРЕШЕН\n" .
-            "Но прошло менее 1 часа с последней сделки.\n" .
-            "Осталось ждать: <b>{$leftMin} мин</b>"
-        );
-
-        TelegramSent::markSent($signalHash);  // помечаем свечу обработанной
-        return ['verdict' => $verdict, 'traded' => false, 'reason' => 'cooldown', 'left_min' => $leftMin];
-    }
-}
-
-// 5. Скачиваем свечи с Binance
-$candles = $this->fetchCandles();
+        // 5. Скачиваем свечи с Binance
+        $candles = $this->fetchCandles();
         if (!$candles) {
             return ['verdict' => $verdict, 'traded' => false, 'reason' => 'no_candles'];
         }
@@ -143,8 +117,8 @@ $candles = $this->fetchCandles();
         $tfs     = ['1d', '1h', '15m'];
 
         $result = [
-            'kf'  => [],   // из oth_*
-            'old' => [],   // из old_bot_signals_*
+            'kf'  => [],
+            'old' => [],
         ];
 
         foreach ($symbols as $sym) {
@@ -240,7 +214,6 @@ $candles = $this->fetchCandles();
         }
 
         $k = $res['data'];
-        // [0] = текущая, [1..3] = последние 3 закрытые
         $c1 = $k[1];
         $c2 = $k[2];
         $c3 = $k[3];
@@ -296,7 +269,17 @@ $candles = $this->fetchCandles();
     // ============================================
     private function openTrade(array $candles, float $prob): array
     {
-        $symbol = self::TRADE_SYMBOL;
+      $symbol = self::TRADE_SYMBOL;
+
+    // 0. Проверка позиции
+    $posCheck = $this->binance->getPosition($symbol);
+    if (!$posCheck['success']) {
+        return ['success' => false, 'error' => 'position check failed: ' . $posCheck['error']];
+    }
+    if ($posCheck['has_position']) {
+        Log::info('[TradingBot] Position already open, skip new trade');
+        return ['success' => false, 'error' => 'Позиция уже открыта. Новая не нужна.'];
+    }
 
         // Текущая цена с testnet
         $priceRes = $this->binance->getPrice($symbol);
@@ -345,23 +328,25 @@ $candles = $this->fetchCandles();
         $trailActivatePrice = round($entryPrice * (1 - self::TRAIL_ACTIVATE_PERCENT / 100) / $tickSize) * $tickSize;
         $trailActivatePrice = number_format($trailActivatePrice, $decimals, '.', '');
 
-  // Сбрасываем старые условные ордера, чтобы не было конфликта
-// Сбрасываем ВСЕ старые ордера, чтобы не было конфликта
-$this->binance->cancelAllOpenOrders($symbol);
+        // Сбрасываем старые условные заявки, чтобы не было конфликта
+        $this->binance->cancelAllAlgoOrders($symbol);
 
-$slResult = $this->binance->setStopLoss($symbol, $slPrice);
+        $slResult = $this->binance->setStopLoss($symbol, $slPrice);
+
         // Трейлинг-стоп вместо фиксированного TP
-   $tpResult = $this->binance->setTrailingStop(
-    $symbol,
-    $quantity,
-    $trailActivatePrice,
-    self::TRAIL_CALLBACK_RATE
-);
+        $tpResult = $this->binance->setTrailingStop(
+            $symbol,
+            $quantity,
+            $trailActivatePrice,
+            self::TRAIL_CALLBACK_RATE
+        );
+
         if (!$slResult['success']) {
             $this->telegram->send("⚠️ Шорт открыт, но SL не выставлен: " . $slResult['error']);
         }
         if (!$tpResult['success']) {
-     $this->telegram->send("⚠️ Шорт открыт, но Trailing не выставлен: " . $tpResult['error']);  }
+            $this->telegram->send("⚠️ Шорт открыт, но Trailing не выставлен: " . $tpResult['error']);
+        }
 
         // Записываем в БД
         Trade::create([
@@ -370,7 +355,7 @@ $slResult = $this->binance->setStopLoss($symbol, $slPrice);
             'entry_price' => $entryPrice,
             'quantity'    => $quantity,
             'leverage'    => self::LEVERAGE,
-              'stop_loss'   => (float)$slPrice,
+            'stop_loss'   => (float)$slPrice,
             'take_profit' => (float)$trailActivatePrice,
             'status'      => 'open',
             'opened_at'   => now('UTC'),
@@ -385,7 +370,7 @@ $slResult = $this->binance->setStopLoss($symbol, $slPrice);
             "Цена входа: $" . number_format($entryPrice, 2) . "\n" .
             "Количество: {$quantity} BTC\n" .
             "Плечо: " . self::LEVERAGE . "x\n" .
-             "SL: $" . number_format((float)$slPrice, 2) . " (+" . self::SL_PERCENT . "%)\n" .
+            "SL: $" . number_format((float)$slPrice, 2) . " (+" . self::SL_PERCENT . "%)\n" .
             "Trailing: активация $" . number_format((float)$trailActivatePrice, 2) .
             " (-" . self::TRAIL_ACTIVATE_PERCENT . "%), откат " . self::TRAIL_CALLBACK_RATE . "%"
         );
