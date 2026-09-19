@@ -119,6 +119,12 @@ docker-compose.yml
 - Модель обучена на 2023–2024 и проверена на 2025-2026. 
 - Проект работает с **Binance DEMO**  
 
+## Лицензия
+
+PolyForm Noncommercial 1.0.0 — **запрещено коммерческое использование** без отдельного письменного разрешения.
+
+Для получения коммерческой лицензии свяжитесь: https://github.com/ditlate0-spec
+
 ## Автор
 IG https://www.instagram.com/prod_23b/ 
 [23b] — [ https://github.com/ditlate0-spec / LinkedIn]
