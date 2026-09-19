@@ -64,13 +64,39 @@ class TradingBotService
         $candleTime = gmdate('Y-m-d H:i', $candleTs);
         $signalHash = md5('trade_' . $candleTime);
 
-        if (TelegramSent::alreadySent($signalHash)) {
-            Log::info('[TradingBot] already traded this candle: ' . $candleTime);
-            return ['verdict' => $verdict, 'traded' => false, 'reason' => 'already_traded'];
-        }
+       if (TelegramSent::alreadySent($signalHash)) {
+    Log::info('[TradingBot] already traded this candle: ' . $candleTime);
+    return ['verdict' => $verdict, 'traded' => false, 'reason' => 'already_traded'];
+}
 
-        // 5. Скачиваем свечи с Binance
-        $candles = $this->fetchCandles();
+// 4.5. КУЛДАУН: не чаще одной сделки в час
+$lastTrade = Trade::whereIn('status', ['open', 'closed'])
+    ->orderBy('opened_at', 'desc')
+    ->first();
+
+if ($lastTrade && $lastTrade->opened_at) {
+    $lastTs = $lastTrade->opened_at->timestamp;   // UTC
+    $nowTs  = time();
+    $diff   = $nowTs - $lastTs;
+
+    if ($diff < 3600) {
+        $leftMin = (int)ceil((3600 - $diff) / 60);
+        Log::info("[TradingBot] cooldown active: {$leftMin} min left");
+
+        $this->telegram->send(
+            "⏳ <b>СИГНАЛ ПРОПУЩЕН (КУЛДАУН)</b>\n" .
+            "Вердикт: ВХОД РАЗРЕШЕН\n" .
+            "Но прошло менее 1 часа с последней сделки.\n" .
+            "Осталось ждать: <b>{$leftMin} мин</b>"
+        );
+
+        TelegramSent::markSent($signalHash);  // помечаем свечу обработанной
+        return ['verdict' => $verdict, 'traded' => false, 'reason' => 'cooldown', 'left_min' => $leftMin];
+    }
+}
+
+// 5. Скачиваем свечи с Binance
+$candles = $this->fetchCandles();
         if (!$candles) {
             return ['verdict' => $verdict, 'traded' => false, 'reason' => 'no_candles'];
         }

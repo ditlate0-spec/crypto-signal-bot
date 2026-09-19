@@ -14,6 +14,7 @@ use App\Services\KfBotService;
 use App\Services\KfCalculatorService;
 use App\Services\BinanceService;
 use App\Services\NewsService;
+use App\Services\TradingBotService;
 
 class DashboardController extends Controller
 {
@@ -24,13 +25,14 @@ class DashboardController extends Controller
         private KfCalculatorService $oldBot,     // Бот №2 → old_bot_signals_*
         private BinanceService      $binance,
         private NewsService         $news,
+        private TradingBotService   $tradingBot, // Торговый бот: вердикт → модель → шорт
     ) {}
 
     public function index()
     {
         // ============================================
-        // 1. ПРОГОНЯЕМ ОБА БОТА (возвращают живой расчёт,
-        //    пишут в БД при KF > порога)
+        // 1. ПРОГОНЯЕМ KF-БОТОВ
+        //    (возвращают живой расчёт, пишут в БД при KF > порога)
         // ============================================
         $kfLive  = [];
         $oldLive = [];
@@ -40,6 +42,18 @@ class DashboardController extends Controller
             $oldLive = $this->oldBot->runAll();
         } catch (\Throwable $e) {
             \Log::error('[Dashboard] bot run failed: ' . $e->getMessage());
+        }
+
+        // ============================================
+        // 1.5. ТОРГОВЫЙ БОТ
+        //      читает свежие KF из БД → вердикт → модель → шорт
+        //      Защита от повторов: TelegramSent::alreadySent()
+        //      (одна сделка на 15-минутную свечу)
+        // ============================================
+        try {
+            $this->tradingBot->run();
+        } catch (\Throwable $e) {
+            \Log::error('[Dashboard] TradingBot failed: ' . $e->getMessage());
         }
 
         // ============================================
@@ -57,7 +71,7 @@ class DashboardController extends Controller
         $cryptoNews = $this->news->getSentiment('BTC');
 
         // ============================================
-        // 4. МОДЕЛЬ
+        // 4. МОДЕЛЬ (для отображения на дашборде)
         // ============================================
         $modelResult = null;
         try {

@@ -351,7 +351,27 @@
 </div>
 
 <script>
-    setTimeout(function(){ location.reload(); }, 15 * 60 * 1000);
+function scheduleReload() {
+    const now = new Date();
+    const minutes = now.getMinutes();
+
+    let nextMinute = Math.ceil(minutes / 15) * 15;
+    if (nextMinute === minutes) nextMinute += 15;
+    if (nextMinute >= 60) nextMinute = 0;
+
+    const target = new Date();
+    target.setMinutes(nextMinute);
+    target.setSeconds(0);
+    target.setMilliseconds(0);
+
+    if (nextMinute === 0) {
+        target.setHours(now.getHours() + 1);
+    }
+const delay = target.getTime() - now.getTime() + 3000;  // +3 секунды
+setTimeout(() => location.reload(), delay);
+}
+
+scheduleReload();
 </script>
 
 </body>
