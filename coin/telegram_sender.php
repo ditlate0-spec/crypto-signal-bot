@@ -6,12 +6,12 @@
 // + БЛОКИРОВКА ПРИ ЖАДНОСТИ > 75
 // ============================================
 
-$TOKEN   = "5608379544:AAHU2hFHcCVbQKD8RJS6HWunN_IeGCDcUmc";
+$TOKEN   = "ваши данные";
 $CHAT_ID = 1745395495;
 $SYMBOL  = 'BTCUSDT';
 
-$BINANCE_API_KEY = 'SLT54mDG54Jh0SlIojXV7aGv3PD9MBYBq9gvEO1DcsjdUSAj6f05DsZn8h0s28u5';
-$BINANCE_SECRET  = 'bjrIvPmVbZe3wF6aRYoCXnub3jFTEFgqQkdMCTx9tZyC4l473VSqYI7SKQMYfN0r';
+$BINANCE_API_KEY = 'ваши данные';
+$BINANCE_SECRET  = 'ваши данные';
 
 $data_kf     = ['BTCUSDT' => ['1d' => 0, '1h' => 0, '15m' => 0], 'ETHUSDT' => ['1d' => 0, '1h' => 0, '15m' => 0]];
 $data_old    = ['BTCUSDT' => ['1d' => 0, '1h' => 0, '15m' => 0], 'ETHUSDT' => ['1d' => 0, '1h' => 0, '15m' => 0]];
