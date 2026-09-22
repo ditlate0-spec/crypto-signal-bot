@@ -48,6 +48,21 @@
 в которых не уверена**, повышая winrate за счёт сокращения количества
 сделок.
 
+## Скриншоты
+
+### Дашборд
+![Дашборд](screen/screenshot-dashboard.png)
+
+### Открытие и закрытие сделки
+![Открытие сделки](screen/opening%20and%20closing%20a%20trade.png)
+![Закрытие сделки](screen/opening%20and%20closing%20a%20trade%202.png)
+
+### Уведомления в Telegram
+![Telegram](screen/screenshot-telegram.png)
+
+### Тестирование
+![Тест](screen/screenshot-test.png)
+
 ## Стек
 
 | Слой | Технологии |
