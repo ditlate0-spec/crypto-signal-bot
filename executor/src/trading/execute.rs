@@ -243,7 +243,7 @@ pub async fn execute_trade(
     );
 
     let _trail_order = match client
-        .set_trailing_stop(&req.symbol, trail_activation, req.trail_callback_rate)
+        .set_trailing_stop(&req.symbol, filled_qty, trail_activation, req.trail_callback_rate)
         .await
     {
         Ok(t) => {

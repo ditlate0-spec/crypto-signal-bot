@@ -365,6 +365,7 @@ impl BinanceClient {
     pub async fn set_trailing_stop(
         &self,
         symbol: &str,
+        quantity: f64,
         activation_price: f64,
         callback_rate: f64,
     ) -> Result<AlgoOrderResponse> {
@@ -375,9 +376,10 @@ impl BinanceClient {
                 ("symbol".into(), symbol.into()),
                 ("side".into(), "BUY".into()),
                 ("type".into(), "TRAILING_STOP_MARKET".into()),
+                ("quantity".into(), format!("{:.8}", quantity)),
+                ("reduceOnly".into(), "true".into()),
                 ("activatePrice".into(), format!("{:.2}", activation_price)),
                 ("callbackRate".into(), format!("{:.2}", callback_rate)),
-                ("closePosition".into(), "true".into()),
                 ("workingType".into(), "MARK_PRICE".into()),
             ],
         ).await;
@@ -392,9 +394,10 @@ impl BinanceClient {
                         ("symbol".into(), symbol.into()),
                         ("side".into(), "BUY".into()),
                         ("type".into(), "TRAILING_STOP_MARKET".into()),
+                        ("quantity".into(), format!("{:.8}", quantity)),
+                        ("reduceOnly".into(), "true".into()),
                         ("activationPrice".into(), format!("{:.2}", activation_price)),
                         ("callbackRate".into(), format!("{:.2}", callback_rate)),
-                        ("closePosition".into(), "true".into()),
                         ("workingType".into(), "MARK_PRICE".into()),
                     ],
                 ).await?;
@@ -407,7 +410,7 @@ impl BinanceClient {
                     side: "BUY".into(),
                     algo_status: "NEW".into(),
                     trigger_price: format!("{:.2}", activation_price),
-                    close_position: true,
+                    close_position: false,
                     working_type: "MARK_PRICE".into(),
                 })
             }
