@@ -1,11 +1,6 @@
 <?php
 // ============================================
-// coin/telegram_sender.php
-// СИГНАЛЫ В ТГ — только когда сделка открыта.
-// ОДНА СДЕЛКА НА 15-МИНУТНУЮ СВЕЧУ (максимум)
-// + БЛОКИРОВКА ПРИ ЖАДНОСТИ > 75
-// ТОРГОВЛЯ ВЫНЕСЕНА В RUST-EXECUTOR (HTTP)
- 
+
 // Подключение к БД (добавлено для standalone-запуска)
 $connection = mysqli_connect(
     getenv('DB_HOST') ?: 'db',
@@ -19,8 +14,8 @@ if (!$connection) {
 }
 
 mysqli_set_charset($connection, 'utf8mb4');
-$TOKEN   = "5608379544:AAHU2hFHcCVbQKD8RJS6HWunN_IeGCDcUmc";
-$CHAT_ID = 1745395495;
+$TOKEN   = "ваш токен";
+$CHAT_ID = ваш;
 $SYMBOL  = 'BTCUSDT';
 
 $data_kf     = ['BTCUSDT' => ['1d' => 0, '1h' => 0, '15m' => 0], 'ETHUSDT' => ['1d' => 0, '1h' => 0, '15m' => 0]];
