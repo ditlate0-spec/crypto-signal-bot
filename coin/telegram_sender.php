@@ -2,16 +2,26 @@
 // ============================================
 // coin/telegram_sender.php
 // СИГНАЛЫ В ТГ — только когда сделка открыта.
- // ОДНА СДЕЛКА НА 15-МИНУТНУЮ СВЕЧУ (максимум)
+// ОДНА СДЕЛКА НА 15-МИНУТНУЮ СВЕЧУ (максимум)
 // + БЛОКИРОВКА ПРИ ЖАДНОСТИ > 75
-// ============================================
+// ТОРГОВЛЯ ВЫНЕСЕНА В RUST-EXECUTOR (HTTP)
+ 
+// Подключение к БД (добавлено для standalone-запуска)
+$connection = mysqli_connect(
+    getenv('DB_HOST') ?: 'db',
+    getenv('DB_USERNAME') ?: 'root',
+    getenv('DB_PASSWORD') ?: 'root',
+    getenv('DB_DATABASE') ?: 'volta'
+);
 
-$TOKEN   = "ваши данные";
+if (!$connection) {
+    die('MySQL connection failed: ' . mysqli_connect_error());
+}
+
+mysqli_set_charset($connection, 'utf8mb4');
+$TOKEN   = "5608379544:AAHU2hFHcCVbQKD8RJS6HWunN_IeGCDcUmc";
 $CHAT_ID = 1745395495;
 $SYMBOL  = 'BTCUSDT';
-
-$BINANCE_API_KEY = 'ваши данные';
-$BINANCE_SECRET  = 'ваши данные';
 
 $data_kf     = ['BTCUSDT' => ['1d' => 0, '1h' => 0, '15m' => 0], 'ETHUSDT' => ['1d' => 0, '1h' => 0, '15m' => 0]];
 $data_old    = ['BTCUSDT' => ['1d' => 0, '1h' => 0, '15m' => 0], 'ETHUSDT' => ['1d' => 0, '1h' => 0, '15m' => 0]];
@@ -49,7 +59,7 @@ function tgMarkSent($connection, $hash) {
 // ============================================
 $fg_line = '';
 $fg_hash_part = '';
-$fg_block_trade = false;   // <-- БЛОКИРОВКА ТОРГОВЛИ ПРИ ЖАДНОСТИ > 75
+$fg_block_trade = false;
 
 if (isset($fear_greed) && $fear_greed && !isset($fear_greed['error'])) {
     $fgv = (int)$fear_greed['value'];
@@ -62,7 +72,6 @@ if (isset($fear_greed) && $fear_greed && !isset($fear_greed['error'])) {
     $fg_line = "$fg_txt — $fgv/100 ($fg_hint)";
     $fg_hash_part = 'fg_' . $fgv;
 
-    // ЕСЛИ ЖАДНОСТЬ > 75 — НЕ ТОРГУЕМ
     if ($fgv > 75) {
         $fg_block_trade = true;
     }
@@ -165,11 +174,10 @@ foreach (['BTCUSDT', 'ETHUSDT'] as $sym) {
 }
 
 // ============================================
-// 3. КАСКАДНЫЙ АЛГОРИТМ (без НС)
+// 3. КАСКАДНЫЙ АЛГОРИТМ
 // ============================================
 $verdict = "❌ НЕ ТОРГУЕМ (Тренды слишком слабы)";
 
-// === ПОРОГИ ===
 $THRESH_DAY_OTH     = 20;
 $THRESH_DAY_OLD     = 50;
 $THRESH_HOUR_OTH    = 10;
@@ -205,9 +213,9 @@ elseif ($btc_hour_strong) {
 }
 
 // ============================================
-// 3.1. БЛОКИРОВКА ПО ЖАДНОСТИ (Fear & Greed > 75)
+// 3.1. БЛОКИРОВКА ПО ЖАДНОСТИ
 // ============================================
-$verdict_raw = $verdict;   // сохраняем исходный вердикт KF для уведомлений
+$verdict_raw = $verdict;
 
 if ($fg_block_trade && strpos($verdict, 'ВХОД РАЗРЕШЕН') !== false) {
     $verdict = "🚫 <b>НЕ ТОРГУЕМ (ЭКСТРЕМАЛЬНАЯ ЖАДНОСТЬ)</b>\n" .
@@ -215,31 +223,47 @@ if ($fg_block_trade && strpos($verdict, 'ВХОД РАЗРЕШЕН') !== false) 
 }
 
 // ============================================
-// 4. ПОДКЛЮЧЕНИЕ BINANCE
+// 4. ПОДКЛЮЧЕНИЕ RUST EXECUTOR
 // ============================================
-require_once __DIR__ . '/binance_demo.php';
-$binance = new BinanceDemo($BINANCE_API_KEY, $BINANCE_SECRET);
+require_once __DIR__ . '/RustExecutorClient.php';
+$executor = new RustExecutorClient();
 
 $tradeSymbol = 'BTCUSDT';
 $margin      = 100;
 $leverage    = 50;
-$sl_percent  = 0.5;             // фиксированный стоп-лосс (выше входа для шорта)
-$trail_activate_percent = 0.2;  // активация трейлинга при -0.2% от входа
-$trail_callback_rate    = 0.1;  // шаг отката 0.1%
+$sl_percent  = 0.5;
+$trail_activate_percent = 0.2;
+$trail_callback_rate    = 0.1;
 
-$posCheck   = $binance->getPosition($tradeSymbol);
-$hasPosition = ($posCheck['success'] && $posCheck['has_position']);
+// Считаем, что позиция открыта, если в БД есть запись со status='open'.
+// Rust сам проверит наличие позиции на бирже при /execute.
+$hasPosition = false;
+$q_pos = mysqli_query($connection, "
+    SELECT `id` FROM `trades` WHERE `status` = 'open' LIMIT 1
+");
+if ($q_pos && mysqli_num_rows($q_pos) > 0) {
+    $hasPosition = true;
+}
 
 // ============================================
-// 4.1.5. СИНХРОНИЗАЦИЯ СТАТУСОВ С БИРЖЕЙ
+// 4.1.5. СИНХРОНИЗАЦИЯ: если в БД open, но позиции нет — закрываем
 // ============================================
-if (!$hasPosition) {
-    $now_utc = gmdate('Y-m-d H:i:s');
-    mysqli_query($connection, "
-        UPDATE `trades`
-        SET `status` = 'closed', `closed_at` = '$now_utc'
-        WHERE `status` = 'open'
-    ");
+$q_open = mysqli_query($connection, "
+    SELECT `id` FROM `trades`
+    WHERE `status` = 'open'
+    ORDER BY `opened_at` DESC
+    LIMIT 1
+");
+
+if ($q_open && $row_open = mysqli_fetch_assoc($q_open)) {
+    if (!$hasPosition) {
+        $now_utc = gmdate('Y-m-d H:i:s');
+        mysqli_query($connection, "
+            UPDATE `trades`
+            SET `status` = 'closed', `closed_at` = '$now_utc'
+            WHERE `id` = {$row_open['id']}
+        ");
+    }
 }
 
 // ============================================
@@ -282,36 +306,15 @@ if ($hasPosition) {
         tgMarkSent($connection, $common_hash);
     }
 }
+
 // ============================================
 // 4.2. ОТКРЫТИЕ СДЕЛКИ — ПОСЛЕ ПРОВЕРКИ МОДЕЛЬЮ
 // ============================================
-
 $candle_ts   = floor(time() / 900) * 900;
 $candle_time = gmdate('Y-m-d H:i', $candle_ts);
 $signal_hash = md5('trade_' . $candle_time);
 $already_traded = tgAlreadySent($connection, $signal_hash);
-// ============================================
-// 4.1.5. СИНХРОНИЗАЦИЯ СТАТУСОВ С БИРЖЕЙ
-// ============================================
-// Если в БД есть open-сделки, но на бирже позиции нет — закрываем их
-$q_open = mysqli_query($connection, "
-    SELECT `id` FROM `trades`
-    WHERE `status` = 'open'
-    ORDER BY `opened_at` DESC
-    LIMIT 1
-");
 
-if ($q_open && $row_open = mysqli_fetch_assoc($q_open)) {
-    // Если на бирже позиции НЕТ, а в БД — open, значит сделка закрылась
-    if (!$hasPosition) {
-        $now_utc = gmdate('Y-m-d H:i:s');
-        mysqli_query($connection, "
-            UPDATE `trades`
-            SET `status` = 'closed', `closed_at` = '$now_utc'
-            WHERE `id` = {$row_open['id']}
-        ");
-    }
-}
 // ============================================
 // 4.2.0. ЗАЩИТА ОТ ПОВТОРНЫХ СДЕЛОК (1 ЧАС)
 // ============================================
@@ -341,7 +344,7 @@ if ($q_last && $row_last = mysqli_fetch_assoc($q_last)) {
 // ============================================
 if (!$already_traded && $cooldown_ok && !$fg_block_trade && strpos($verdict, 'ВХОД РАЗРЕШЕН') !== false) {
     // ============================================
-    // ПОЛУЧАЕМ 3 СВЕЧИ С РЕАЛЬНОГО BINANCE
+    // ПОЛУЧАЕМ 3 СВЕЧИ С BINANCE (для ML-модели)
     // ============================================
     $candles_ok = false;
     $c1 = $c2 = $c3 = null;
@@ -355,7 +358,6 @@ if (!$already_traded && $cooldown_ok && !$fg_block_trade && strpos($verdict, 'В
 
     $klines = json_decode($raw_k, true);
     if (is_array($klines) && count($klines) >= 4) {
-        // [0] = текущая (не закрыта), [1..3] = последние 3 закрытые
         $c1 = $klines[1];
         $c2 = $klines[2];
         $c3 = $klines[3];
@@ -372,13 +374,9 @@ if (!$already_traded && $cooldown_ok && !$fg_block_trade && strpos($verdict, 'В
     if ($candles_ok) {
         require_once __DIR__ . '/model_check.php';
 
-        // Цена входа — берём с реального Binance (та же, что в свечах)
         $entry_price_for_model = (float)$c3[4];
-
-        // Время сигнала — время последней закрытой свечи
         $signal_time_for_model = gmdate('Y-m-d H:i:s', (int)($c3[0] / 1000));
 
-        // kf-данные из переменных, которые уже посчитаны выше
         $kf_data_for_model = [
             'kf'             => $data_old['BTCUSDT']['15m'],
             'kf_btc_15m_oth' => $data_kf['BTCUSDT']['15m'],
@@ -399,16 +397,12 @@ if (!$already_traded && $cooldown_ok && !$fg_block_trade && strpos($verdict, 'В
             $model_prob = (float)$model_res['probability_tp'];
             $model_dec  = $model_res['decision'];
 
-            // ============================================
-            // ПОРОГ 0.85 — твоё требование
-            // ============================================
             $MODEL_THRESHOLD = 0.85;
 
             if ($model_prob >= $MODEL_THRESHOLD) {
                 $model_ok = true;
             }
 
-            // Отправляем в ТГ результат проверки
             $prob_pct  = round($model_prob * 100, 1);
             $emoji     = $model_ok ? '✅' : '❌';
             $status    = $model_ok ? 'ВХОД РАЗРЕШЁН' : 'ПРОПУСК (низкая вероятность)';
@@ -429,102 +423,61 @@ if (!$already_traded && $cooldown_ok && !$fg_block_trade && strpos($verdict, 'В
     }
 
     // ============================================
-    // ОТКРЫТИЕ СДЕЛКИ (только если model_ok)
+    // ОТКРЫТИЕ СДЕЛКИ — ЗАПРОС В RUST
     // ============================================
     if ($model_ok) {
 
-        $priceData = $binance->getPrice($tradeSymbol);
+        $response = $executor->executeTrade([
+            'symbol'                 => $tradeSymbol,
+            'margin'                 => $margin,
+            'leverage'               => $leverage,
+            'sl_percent'             => $sl_percent,
+            'trail_activate_percent' => $trail_activate_percent,
+            'trail_callback_rate'    => $trail_callback_rate,
+            'idempotency_key'        => $signal_hash,
+        ]);
 
-        if (!$priceData['success']) {
-            tgSend($TOKEN, $CHAT_ID, "❌ Ошибка получения цены: " . $priceData['error']);
+        if ($response['status'] === 'ok' && isset($response['result'])) {
+            $r = $response['result'];
+
+            $entryPrice = (float)$r['entry_price'];
+            $quantity   = (float)$r['quantity'];
+            $slPrice    = (float)$r['sl_price'];
+            $tpPrice    = (float)$r['trail_activation_price'];
+
+            $entryEsc = mysqli_real_escape_string($connection, $entryPrice);
+            $slEsc    = mysqli_real_escape_string($connection, $slPrice);
+            $tpEsc    = mysqli_real_escape_string($connection, $tpPrice);
+            $qtyEsc   = mysqli_real_escape_string($connection, $quantity);
+            $now      = gmdate('Y-m-d H:i:s');
+
+            mysqli_query($connection, "INSERT INTO trades 
+                (symbol, side, entry_price, quantity, leverage, stop_loss, take_profit, status, opened_at)
+                VALUES ('$tradeSymbol', 'SHORT', '$entryEsc', '$qtyEsc', $leverage, '$slEsc', '$tpEsc', 'open', '$now')");
+
+            tgMarkSent($connection, $signal_hash);
+
+            $prob_pct = round($model_prob * 100, 1);
+
+            tgSend($TOKEN, $CHAT_ID, "✅ <b>ШОРТ ОТКРЫТ (Rust)</b>\n" .
+                "Символ: $tradeSymbol\n" .
+                "Статус: {$r['status']}\n" .
+                "Модель: <b>{$prob_pct}%</b> вероятность TP\n" .
+                "Цена входа: $" . number_format($entryPrice, 2) . "\n" .
+                "Количество: $quantity BTC\n" .
+                "Плечо: {$leverage}x\n" .
+                "SL: $" . number_format($slPrice, 2) . " (+{$sl_percent}%)\n" .
+                "Order ID: {$r['order_id']}\n" .
+                "SL Order ID: {$r['sl_order_id']}");
+
         } else {
-
-            $currentPrice = $priceData['price'];
-            $notional     = $margin * $leverage;
-            $quantity     = $notional / $currentPrice;
-
-            $info = $binance->getExchangeInfo($tradeSymbol);
-
-            if (!$info['success']) {
-                tgSend($TOKEN, $CHAT_ID, "❌ Ошибка exchangeInfo: " . $info['error']);
-            } else {
-
-                $stepSize = $info['stepSize'];
-                $quantity = floor($quantity / $stepSize) * $stepSize;
-                $quantity = round($quantity, 8);
-
-                if ($quantity * $currentPrice < $info['minNotional']) {
-                    tgSend($TOKEN, $CHAT_ID, "❌ Ошибка: позиция меньше минимального номинала");
-                } else {
-
-                    $levResult = $binance->setLeverage($tradeSymbol, $leverage);
-                    if (!$levResult['success']) {
-                        error_log("[trade] Ошибка установки плеча: " . $levResult['error']);
-                    }
-
-                    $binance->setMarginType($tradeSymbol, 'ISOLATED');
-
-                    $orderResult = $binance->openShort($tradeSymbol, $quantity);
-
-                    if (!$orderResult['success']) {
-                        tgSend($TOKEN, $CHAT_ID, "❌ Ошибка открытия сделки: " . $orderResult['error']);
-                    } else {
-
-                        $entryPrice = (float)$orderResult['data']['avgPrice'];
-
-                        $tickSize = $info['tickSize'] ?? 0.1;
-                        $decimals = (int)abs(log10($tickSize));
-
-                        // SL выше входа (для шорта)
-                        $slPrice = round($entryPrice * (1 + $sl_percent / 100) / $tickSize) * $tickSize;
-                        $slPrice = number_format($slPrice, $decimals, '.', '');
-
-                        // Активация трейлинга ниже входа (для шорта)
-                        $trailActivatePrice = round($entryPrice * (1 - $trail_activate_percent / 100) / $tickSize) * $tickSize;
-                        $trailActivatePrice = number_format($trailActivatePrice, $decimals, '.', '');
-
-                        // Фиксированный SL
-                        $slResult = $binance->setStopLoss($tradeSymbol, $slPrice);
-
-                        // Трейлинг-стоп вместо фиксированного TP
-                        $tpResult = $binance->setTrailingStop($tradeSymbol, $trailActivatePrice, $trail_callback_rate);
-
-                        if (!$slResult['success']) {
-                            tgSend($TOKEN, $CHAT_ID, "⚠️ Шорт открыт, но SL не выставлен: " . $slResult['error']);
-                        }
-                        if (!$tpResult['success']) {
-                            tgSend($TOKEN, $CHAT_ID, "⚠️ Шорт открыт, но Trailing не выставлен: " . $tpResult['error']);
-                        }
-
-                        $entryEsc = mysqli_real_escape_string($connection, $entryPrice);
-                        $slEsc    = mysqli_real_escape_string($connection, $slPrice);
-                        $tpEsc    = mysqli_real_escape_string($connection, $trailActivatePrice); // цена активации трейлинга
-                        $qtyEsc   = mysqli_real_escape_string($connection, $quantity);
-                        $now      = gmdate('Y-m-d H:i:s');
-
-                        mysqli_query($connection, "INSERT INTO trades 
-                            (symbol, side, entry_price, quantity, leverage, stop_loss, take_profit, status, opened_at)
-                            VALUES ('$tradeSymbol', 'SHORT', '$entryEsc', '$qtyEsc', $leverage, '$slEsc', '$tpEsc', 'open', '$now')");
-
-                        tgMarkSent($connection, $signal_hash);
-
-                        $prob_pct = round($model_prob * 100, 1);
-
-                        tgSend($TOKEN, $CHAT_ID, "✅ <b>ШОРТ ОТКРЫТ</b>\n" .
-                            "Символ: $tradeSymbol\n" .
-                            "Модель: <b>{$prob_pct}%</b> вероятность TP\n" .
-                            "Цена входа: $" . number_format($entryPrice, 2) . "\n" .
-                            "Количество: $quantity BTC\n" .
-                            "Плечо: {$leverage}x\n" .
-                            "SL: $" . number_format($slPrice, 2) . " (+{$sl_percent}%)\n" .
-                            "Trailing: активация $" . number_format($trailActivatePrice, 2) .
-                            " (-{$trail_activate_percent}%), откат {$trail_callback_rate}%");
-                    }
-                }
-            }
+            $err = $response['error'] ?? 'unknown error';
+            tgSend($TOKEN, $CHAT_ID, "❌ <b>ОШИБКА ОТКРЫТИЯ СДЕЛКИ (Rust)</b>\n" . $err);
+            tgMarkSent($connection, $signal_hash);
         }
+
     } else {
-        // Модель сказала "нет" — помечаем свечу как обработанную, чтобы не долбить каждую минуту
+        // Модель сказала "нет" — помечаем свечу как обработанную
         tgMarkSent($connection, $signal_hash);
     }
 }
@@ -544,7 +497,6 @@ elseif (!$already_traded && $cooldown_ok && $fg_block_trade && strpos($verdict_r
 // 4.2.3. КУЛДАУН — УВЕДОМЛЕНИЕ
 // ============================================
 elseif (!$already_traded && !$cooldown_ok && !$fg_block_trade && strpos($verdict, 'ВХОД РАЗРЕШЕН') !== false) {
-    // Сигнал есть, но действует кулдаун
     tgSend($TOKEN, $CHAT_ID,
         "⏳ <b>СИГНАЛ ПРОПУЩЕН (КУЛДАУН)</b>\n" .
         "Вердикт: ВХОД РАЗРЕШЕН\n" .
@@ -553,4 +505,5 @@ elseif (!$already_traded && !$cooldown_ok && !$fg_block_trade && strpos($verdict
     );
     tgMarkSent($connection, $signal_hash);
 }
+ 
 ?>
