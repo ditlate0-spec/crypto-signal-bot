@@ -88,7 +88,7 @@ pub async fn run(cmd: Command) -> Result<()> {
                 margin,
                 leverage,
                 sl_percent,
-                trail_activate_percent: 0.2,
+                trail_activate_percent: 0.22,
                 trail_callback_rate: 0.1,
                 idempotency_key: key,
             };
