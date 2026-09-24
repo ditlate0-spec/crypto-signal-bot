@@ -5,6 +5,7 @@ mod config;
 mod error;
 mod server;
 mod trading; 
+mod user_stream;
 
 use clap::Parser;
 use cli::{Cli, run};

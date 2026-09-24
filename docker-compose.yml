@@ -63,16 +63,19 @@ services:
       - .env
     networks:
       - botcoin
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
+    extra_hosts:
+      - "fstream.testnet.binancefuture.com:52.87.123.45" # <-- ВАШ IP
     healthcheck:
       test: ["CMD", "/app/executor", "health"]
       interval: 5s
       timeout: 3s
       retries: 5
       start_period: 10s
-    # Порты наружу НЕ публикуем — Rust доступен только внутри сети botcoin
-    # Для отладки с хоста раскомментируй:
     ports:
-     - "8080:8080"
+      - "8080:8080"
 
 networks:
   botcoin:
