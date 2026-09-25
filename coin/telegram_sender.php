@@ -14,8 +14,8 @@ if (!$connection) {
 }
 
 mysqli_set_charset($connection, 'utf8mb4');
-$TOKEN   = "ваш токен";
-$CHAT_ID = ваш;
+$TOKEN   = "5608379544:AAHU2hFHcCVbQKD8RJS6HWunN_IeGCDcUmc";
+$CHAT_ID = 1745395495;
 $SYMBOL  = 'BTCUSDT';
 
 $data_kf     = ['BTCUSDT' => ['1d' => 0, '1h' => 0, '15m' => 0], 'ETHUSDT' => ['1d' => 0, '1h' => 0, '15m' => 0]];
@@ -224,10 +224,10 @@ require_once __DIR__ . '/RustExecutorClient.php';
 $executor = new RustExecutorClient();
 
 $tradeSymbol = 'BTCUSDT';
-$margin      = 100;
+$margin      = 1000;
 $leverage    = 50;
 $sl_percent  = 0.5;
-$trail_activate_percent = 0.2;
+$trail_activate_percent = 0.22;
 $trail_callback_rate    = 0.1;
 
 // Считаем, что позиция открыта, если в БД есть запись со status='open'.
