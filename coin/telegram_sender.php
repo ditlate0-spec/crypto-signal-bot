@@ -20,8 +20,8 @@ if (!$connection) {
 
 mysqli_set_charset($connection, 'utf8mb4');
 
-$TOKEN   = "5608379544:AAHU2hFHcCVbQKD8RJS6HWunN_IeGCDcUmc";
-$CHAT_ID = 1745395495;
+$TOKEN   = " ";
+$CHAT_ID =  ;
 $SYMBOL  = 'BTCUSDT';
 
 $data_kf  = ['BTCUSDT' => ['1d' => 0, '1h' => 0, '15m' => 0], 'ETHUSDT' => ['1d' => 0, '1h' => 0, '15m' => 0]];
