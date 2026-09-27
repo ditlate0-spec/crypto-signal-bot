@@ -1,12 +1,7 @@
 <?php
 // ============================================
-// telegram_sender.php
-// Полная версия с записью в ai_trade_journal
-// ============================================
 
-// ============================================
-// Подключение к БД
-// ============================================
+// Подключение к БД (добавлено для standalone-запуска)
 $connection = mysqli_connect(
     getenv('DB_HOST') ?: 'db',
     getenv('DB_USERNAME') ?: 'root',
@@ -19,17 +14,12 @@ if (!$connection) {
 }
 
 mysqli_set_charset($connection, 'utf8mb4');
-
 $TOKEN   = "5608379544:AAHU2hFHcCVbQKD8RJS6HWunN_IeGCDcUmc";
 $CHAT_ID = 1745395495;
 $SYMBOL  = 'BTCUSDT';
 
-$data_kf  = ['BTCUSDT' => ['1d' => 0, '1h' => 0, '15m' => 0], 'ETHUSDT' => ['1d' => 0, '1h' => 0, '15m' => 0]];
-$data_old = ['BTCUSDT' => ['1d' => 0, '1h' => 0, '15m' => 0], 'ETHUSDT' => ['1d' => 0, '1h' => 0, '15m' => 0]];
-
-// ============================================
-// ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
-// ============================================
+$data_kf     = ['BTCUSDT' => ['1d' => 0, '1h' => 0, '15m' => 0], 'ETHUSDT' => ['1d' => 0, '1h' => 0, '15m' => 0]];
+$data_old    = ['BTCUSDT' => ['1d' => 0, '1h' => 0, '15m' => 0], 'ETHUSDT' => ['1d' => 0, '1h' => 0, '15m' => 0]];
 
 function tgSend($token, $chat_id, $text) {
     $url = "https://api.telegram.org/bot$token/sendMessage";
@@ -83,7 +73,7 @@ if (isset($fear_greed) && $fear_greed && !isset($fear_greed['error'])) {
 }
 
 // ============================================
-// 0.1. НОВОСТИ
+// 0. НОВОСТИ
 // ============================================
 $news_lines = [];
 $news_hash_part = '';
@@ -240,9 +230,8 @@ $sl_percent  = 0.5;
 $trail_activate_percent = 0.22;
 $trail_callback_rate    = 0.1;
 
-// ============================================
-// 4.1. ПРОВЕРКА ПОЗИЦИИ
-// ============================================
+// Считаем, что позиция открыта, если в БД есть запись со status='open'.
+// Rust сам проверит наличие позиции на бирже при /execute.
 $hasPosition = false;
 $q_pos = mysqli_query($connection, "
     SELECT `id` FROM `trades` WHERE `status` = 'open' LIMIT 1
@@ -349,7 +338,6 @@ if ($q_last && $row_last = mysqli_fetch_assoc($q_last)) {
 // 4.2.1. ОТКРЫТИЕ (с блокировкой по жадности)
 // ============================================
 if (!$already_traded && $cooldown_ok && !$fg_block_trade && strpos($verdict, 'ВХОД РАЗРЕШЕН') !== false) {
-
     // ============================================
     // ПОЛУЧАЕМ 3 СВЕЧИ С BINANCE (для ML-модели)
     // ============================================
@@ -458,135 +446,10 @@ if (!$already_traded && $cooldown_ok && !$fg_block_trade && strpos($verdict, 'В
             $qtyEsc   = mysqli_real_escape_string($connection, $quantity);
             $now      = gmdate('Y-m-d H:i:s');
 
-            // ============================================
-            // INSERT В trades
-            // ============================================
             mysqli_query($connection, "INSERT INTO trades 
                 (symbol, side, entry_price, quantity, leverage, stop_loss, take_profit, status, opened_at)
                 VALUES ('$tradeSymbol', 'SHORT', '$entryEsc', '$qtyEsc', $leverage, '$slEsc', '$tpEsc', 'open', '$now')");
 
-            $tradeId = mysqli_insert_id($connection);
-
-            // ============================================
-            // ЗАПИСЬ В AI-ЖУРНАЛ
-            // ============================================
-            $kf_btc_1d  = (float)($data_kf['BTCUSDT']['1d']  ?? 0);
-            $kf_btc_1h  = (float)($data_kf['BTCUSDT']['1h']  ?? 0);
-            $kf_btc_15m = (float)($data_kf['BTCUSDT']['15m'] ?? 0);
-            $kf_eth_1d  = (float)($data_kf['ETHUSDT']['1d']  ?? 0);
-            $kf_eth_1h  = (float)($data_kf['ETHUSDT']['1h']  ?? 0);
-            $kf_eth_15m = (float)($data_kf['ETHUSDT']['15m'] ?? 0);
-
-            $old_btc_1d  = (float)($data_old['BTCUSDT']['1d']  ?? 0);
-            $old_btc_1h  = (float)($data_old['BTCUSDT']['1h']  ?? 0);
-            $old_btc_15m = (float)($data_old['BTCUSDT']['15m'] ?? 0);
-            $old_eth_1d  = (float)($data_old['ETHUSDT']['1d']  ?? 0);
-            $old_eth_1h  = (float)($data_old['ETHUSDT']['1h']  ?? 0);
-            $old_eth_15m = (float)($data_old['ETHUSDT']['15m'] ?? 0);
-
-            $mlProbability = $model_prob !== null ? (float)$model_prob : null;
-            $mlThreshold   = 0.85;
-
-            $fngIndex = null;
-            $fngLabel = null;
-            if (isset($fear_greed) && $fear_greed && !isset($fear_greed['error'])) {
-                $fngIndex = (int)$fear_greed['value'];
-                $fngLabel = $fear_greed['value_classification'] ?? null;
-            }
-
-            $newsPos = 0;
-            $newsNeg = 0;
-            $newsNeu = 0;
-            $newsHeadlinesJson = null;
-            $newsSentiment = null;
-
-            if (isset($crypto_news) && $crypto_news && !isset($crypto_news['error'])) {
-                $newsPos = (int)$crypto_news['positive_count'];
-                $newsNeg = (int)$crypto_news['negative_count'];
-                $newsNeu = (int)$crypto_news['neutral_count'];
-
-                $headlinesArr = [];
-                foreach (($crypto_news['headlines'] ?? []) as $h) {
-                    $headlinesArr[] = [
-                        'title'     => $h['title']     ?? '',
-                        'source'    => $h['source']    ?? '',
-                        'sentiment' => $h['sentiment'] ?? '',
-                        'date'      => $h['date']      ?? '',
-                    ];
-                }
-                $newsHeadlinesJson = json_encode($headlinesArr, JSON_UNESCAPED_UNICODE);
-
-                if ($newsPos > $newsNeg)      $newsSentiment = 'positive';
-                elseif ($newsNeg > $newsPos)  $newsSentiment = 'negative';
-                else                          $newsSentiment = 'neutral';
-            }
-
-            $verdictText = strip_tags($verdict);
-
-            $symbolEsc        = mysqli_real_escape_string($connection, $tradeSymbol);
-            $fngLabelEsc      = $fngLabel !== null
-                ? "'" . mysqli_real_escape_string($connection, $fngLabel) . "'"
-                : 'NULL';
-            $newsHeadlinesEsc = $newsHeadlinesJson !== null
-                ? "'" . mysqli_real_escape_string($connection, $newsHeadlinesJson) . "'"
-                : 'NULL';
-            $newsSentEsc      = $newsSentiment !== null
-                ? "'" . mysqli_real_escape_string($connection, $newsSentiment) . "'"
-                : 'NULL';
-            $verdictEsc       = mysqli_real_escape_string($connection, $verdictText);
-
-            $mlProbSql   = $mlProbability !== null ? (float)$mlProbability : 'NULL';
-            $fngIndexSql = $fngIndex !== null ? (int)$fngIndex : 'NULL';
-
-            $sqlJournal = "INSERT INTO `ai_trade_journal` (
-                `trade_id`, `symbol`, `side`, `entry_price`, `entry_time`,
-                `quantity`, `leverage`, `sl_price`, `tp_price`,
-
-                `kf_btc_1d`, `kf_btc_1h`, `kf_btc_15m`,
-                `kf_eth_1d`, `kf_eth_1h`, `kf_eth_15m`,
-
-                `old_btc_1d`, `old_btc_1h`, `old_btc_15m`,
-                `old_eth_1d`, `old_eth_1h`, `old_eth_15m`,
-
-                `ml_probability`, `ml_threshold`,
-
-                `fear_greed_index`, `fear_greed_label`,
-
-                `news_positive`, `news_negative`, `news_neutral`,
-                `news_headlines`, `news_sentiment`,
-
-                `verdict_text`,
-
-                `created_at`, `updated_at`
-            ) VALUES (
-                $tradeId, '$symbolEsc', 'SHORT', $entryPrice, '$now',
-                $quantity, $leverage, $slPrice, $tpPrice,
-
-                $kf_btc_1d, $kf_btc_1h, $kf_btc_15m,
-                $kf_eth_1d, $kf_eth_1h, $kf_eth_15m,
-
-                $old_btc_1d, $old_btc_1h, $old_btc_15m,
-                $old_eth_1d, $old_eth_1h, $old_eth_15m,
-
-                $mlProbSql, $mlThreshold,
-
-                $fngIndexSql, $fngLabelEsc,
-
-                $newsPos, $newsNeg, $newsNeu,
-                $newsHeadlinesEsc, $newsSentEsc,
-
-                '$verdictEsc',
-
-                '$now', '$now'
-            )";
-
-            if (!mysqli_query($connection, $sqlJournal)) {
-                error_log('[ai_trade_journal] insert failed: ' . mysqli_error($connection));
-            }
-
-            // ============================================
-            // УВЕДОМЛЕНИЕ В TELEGRAM
-            // ============================================
             tgMarkSent($connection, $signal_hash);
 
             $prob_pct = round($model_prob * 100, 1);
@@ -609,6 +472,7 @@ if (!$already_traded && $cooldown_ok && !$fg_block_trade && strpos($verdict, 'В
         }
 
     } else {
+        // Модель сказала "нет" — помечаем свечу как обработанную
         tgMarkSent($connection, $signal_hash);
     }
 }

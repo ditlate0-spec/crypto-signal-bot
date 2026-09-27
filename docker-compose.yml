@@ -18,6 +18,25 @@ services:
       executor:
         condition: service_healthy
 
+  analyst:
+    build:
+      context: ./python
+      dockerfile: Dockerfile.analyst
+    container_name: botcoin_analyst
+    environment:
+      - OLLAMA_API_KEY=${OLLAMA_API_KEY}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-gpt-oss:120b}
+    ports:
+      - "8001:8001"
+    networks:
+      - botcoin
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
   nginx:
     image: nginx:alpine
     container_name: botcoin_nginx
@@ -67,7 +86,7 @@ services:
       - 8.8.8.8
       - 8.8.4.4
     extra_hosts:
-      - "fstream.testnet.binancefuture.com:52.87.123.45" # <-- ВАШ IP
+      - "fstream.testnet.binancefuture.com:52.87.123.45"
     healthcheck:
       test: ["CMD", "/app/executor", "health"]
       interval: 5s

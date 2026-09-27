@@ -102,39 +102,41 @@
             <div style="color: #ff6b6b;">❌ {{ $fearGreed['error'] ?? 'Нет данных' }}</div>
         @endif
     </div>
-{{-- БЛОК: НОВОСТИ --}}
-<div class="section">
-    <div class="section-title">📰 Новости и тональность</div>
-    @if($cryptoNews && !isset($cryptoNews['error']))
-        <div class="news-counters">
-            <span style="color: #3fb950;">🟢 Позитивных: {{ $cryptoNews['positive_count'] }}</span>
-            &nbsp;&nbsp;
-            <span style="color: #ff6b6b;">🔴 Негативных: {{ $cryptoNews['negative_count'] }}</span>
-            &nbsp;&nbsp;
-            <span style="color: #8b949e;">⚪ Нейтральных: {{ $cryptoNews['neutral_count'] }}</span>
-        </div>
-        <div class="news-list">
-            @foreach($cryptoNews['headlines'] as $headline)
-                @php
-                    $h_sent  = $headline['sentiment'];
-                    $h_icon  = $h_sent == 'positive' ? '🟢' : ($h_sent == 'negative' ? '🔴' : '⚪');
-                    $h_color = $h_sent == 'positive' ? '#3fb950' : ($h_sent == 'negative' ? '#ff6b6b' : '#8b949e');
-                @endphp
-                <div class="news-item" style="border-left-color: {{ $h_color }};">
-                    {{ $h_icon }} {{ $headline['title'] }}
-                    <div class="source">
-                        {{ $headline['source'] }}
-                        @if(!empty($headline['date']))
-                            • {{ date('d.m H:i', strtotime($headline['date'])) }}
-                        @endif
+
+    {{-- БЛОК: НОВОСТИ --}}
+    <div class="section">
+        <div class="section-title">📰 Новости и тональность</div>
+        @if($cryptoNews && !isset($cryptoNews['error']))
+            <div class="news-counters">
+                <span style="color: #3fb950;">🟢 Позитивных: {{ $cryptoNews['positive_count'] }}</span>
+                &nbsp;&nbsp;
+                <span style="color: #ff6b6b;">🔴 Негативных: {{ $cryptoNews['negative_count'] }}</span>
+                &nbsp;&nbsp;
+                <span style="color: #8b949e;">⚪ Нейтральных: {{ $cryptoNews['neutral_count'] }}</span>
+            </div>
+            <div class="news-list">
+                @foreach($cryptoNews['headlines'] as $headline)
+                    @php
+                        $h_sent  = $headline['sentiment'];
+                        $h_icon  = $h_sent == 'positive' ? '🟢' : ($h_sent == 'negative' ? '🔴' : '⚪');
+                        $h_color = $h_sent == 'positive' ? '#3fb950' : ($h_sent == 'negative' ? '#ff6b6b' : '#8b949e');
+                    @endphp
+                    <div class="news-item" style="border-left-color: {{ $h_color }};">
+                        {{ $h_icon }} {{ $headline['title'] }}
+                        <div class="source">
+                            {{ $headline['source'] }}
+                            @if(!empty($headline['date']))
+                                • {{ date('d.m H:i', strtotime($headline['date'])) }}
+                            @endif
+                        </div>
                     </div>
-                </div>
-            @endforeach
-        </div>
-    @else
-        <div style="color: #ff6b6b;">❌ {{ $cryptoNews['error'] ?? 'Нет данных' }}</div>
-    @endif
-</div>
+                @endforeach
+            </div>
+        @else
+            <div style="color: #ff6b6b;">❌ {{ $cryptoNews['error'] ?? 'Нет данных' }}</div>
+        @endif
+    </div>
+
     {{-- БЛОК 2: НАША МОДЕЛЬ --}}
     <div class="section">
         <div class="section-title">🎯 Наша модель (фильтр TP/SL)</div>
@@ -166,66 +168,68 @@
         @endif
     </div>
 
-  {{-- БЛОК 3: KF-СИГНАЛЫ (живой расчёт Бота №1) --}}
-<div class="section">
-    <div class="section-title">📊 KF-сигналы (вероятность падения)</div>
-    <div class="kf-grid">
-        @foreach(['1d' => '📊 1 ДЕНЬ', '1h' => '🕐 1 ЧАС', '15m' => '⏱️ 15 МИНУТ'] as $tf => $label)
-            <div class="kf-card">
-                <div class="tf">{{ $label }}</div>
-                <div class="kf-content">
-                    <table>
-                        <tbody>
-                        @foreach(['BTCUSDT', 'ETHUSDT'] as $sym)
-                            @php $row = $kfLive[$sym][$tf] ?? null; @endphp
-                            <tr>
-                                <td>
-                                    <strong>{{ $sym }}</strong>:
-                                    @if($row)
-                                        {{ $row['kf'] }}%
-                                    @else
-                                        <span style="color:#8b949e;">нет данных</span>
-                                    @endif
-                                </td>
-                            </tr>
-                        @endforeach
-                        </tbody>
-                    </table>
+    {{-- БЛОК 3: KF-СИГНАЛЫ --}}
+    <div class="section">
+        <div class="section-title">📊 KF-сигналы (вероятность падения)</div>
+        <div class="kf-grid">
+            @foreach(['1d' => '📊 1 ДЕНЬ', '1h' => '🕐 1 ЧАС', '15m' => '⏱️ 15 МИНУТ'] as $tf => $label)
+                <div class="kf-card">
+                    <div class="tf">{{ $label }}</div>
+                    <div class="kf-content">
+                        <table>
+                            <tbody>
+                            @foreach(['BTCUSDT', 'ETHUSDT'] as $sym)
+                                @php $row = $kfLive[$sym][$tf] ?? null; @endphp
+                                <tr>
+                                    <td>
+                                        <strong>{{ $sym }}</strong>:
+                                        @if($row)
+                                            {{ $row['kf'] }}%
+                                        @else
+                                            <span style="color:#8b949e;">нет данных</span>
+                                        @endif
+                                    </td>
+                                </tr>
+                            @endforeach
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
-            </div>
-        @endforeach
+            @endforeach
+        </div>
     </div>
-</div>
-{{-- БЛОК 4: СЛИВ ПО ТРЁМ (без текстов) --}}
-<div class="section">
-    <div class="section-title">📊 Слив по трем (слив по тренду)</div>
-    <div class="kf-grid">
-        @foreach(['1d' => '📊 1 ДЕНЬ', '1h' => '🕐 1 ЧАС', '15m' => '⏱️ 15 МИНУТ'] as $tf => $label)
-            <div class="kf-card">
-                <div class="tf">{{ $label }}</div>
-                <div class="kf-content">
-                    <table>
-                        <tbody>
-                        @foreach(['BTCUSDT', 'ETHUSDT'] as $sym)
-                            @php $row = $oldLive[$sym][$tf] ?? null; @endphp
-                            <tr>
-                                <td>
-                                    <strong>{{ $sym }}</strong>:
-                                    @if($row)
-                                        {{ $row['kf'] }}%
-                                    @else
-                                        <span style="color:#8b949e;">—</span>
-                                    @endif
-                                </td>
-                            </tr>
-                        @endforeach
-                        </tbody>
-                    </table>
+
+    {{-- БЛОК 4: СЛИВ ПО ТРЁМ --}}
+    <div class="section">
+        <div class="section-title">📊 Слив по трем (слив по тренду)</div>
+        <div class="kf-grid">
+            @foreach(['1d' => '📊 1 ДЕНЬ', '1h' => '🕐 1 ЧАС', '15m' => '⏱️ 15 МИНУТ'] as $tf => $label)
+                <div class="kf-card">
+                    <div class="tf">{{ $label }}</div>
+                    <div class="kf-content">
+                        <table>
+                            <tbody>
+                            @foreach(['BTCUSDT', 'ETHUSDT'] as $sym)
+                                @php $row = $oldLive[$sym][$tf] ?? null; @endphp
+                                <tr>
+                                    <td>
+                                        <strong>{{ $sym }}</strong>:
+                                        @if($row)
+                                            {{ $row['kf'] }}%
+                                        @else
+                                            <span style="color:#8b949e;">—</span>
+                                        @endif
+                                    </td>
+                                </tr>
+                            @endforeach
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
-            </div>
-        @endforeach
+            @endforeach
+        </div>
     </div>
-</div>
+
     {{-- БЛОК 5: ИСТОРИЯ KF-СИГНАЛОВ --}}
     <div class="history-section">
         <div class="header">📜 История KF-сигналов</div>
@@ -346,6 +350,23 @@
         </div>
     </div>
 
+    {{-- ============================================ --}}
+    {{-- БЛОК 7: AI-АНАЛИЗ (НОВЫЙ) --}}
+    {{-- ============================================ --}}
+    @if($latestAnalysis)
+    <div class="history-section">
+        <div class="header">🤖 Последний AI-анализ</div>
+        <div class="layer" style="max-height: 500px;">
+            <div style="font-size: 10px; color: #8b949e; margin-bottom: 8px;">
+                📅 {{ $latestAnalysis['date']?->format('d.m.Y H:i') ?? $latestAnalysis['file'] }}
+            </div>
+            <div style="font-size: 11px; color: #c9d1d9; line-height: 1.6; white-space: pre-wrap; background: #0d1117; padding: 12px; border-radius: 4px;">
+{{ $latestAnalysis['content'] }}
+            </div>
+        </div>
+    </div>
+    @endif
+
     <div class="update-info">🔄 Автообновление каждые 15 минут</div>
 
 </div>
@@ -367,8 +388,8 @@ function scheduleReload() {
     if (nextMinute === 0) {
         target.setHours(now.getHours() + 1);
     }
-const delay = target.getTime() - now.getTime() + 3000;  // +3 секунды
-setTimeout(() => location.reload(), delay);
+    const delay = target.getTime() - now.getTime() + 3000;
+    setTimeout(() => location.reload(), delay);
 }
 
 scheduleReload();

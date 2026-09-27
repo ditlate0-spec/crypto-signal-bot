@@ -104,22 +104,70 @@ class DashboardController extends Controller
         $histOld1h  = OldBotSignal1h::orderBy('created_at', 'desc')->limit(30)->get();
         $histOld15m = OldBotSignal15m::orderBy('created_at', 'desc')->limit(30)->get();
 
+        // ============================================
+        // 7. AI-АНАЛИЗ (последний файл из storage/app/analytics/)
+        // ============================================
+        $latestAnalysis = $this->getLatestAnalysis();
+
         return view('dashboard', [
-            'fearGreed'   => $fearGreed,
-            'fgDescribe'  => $fgDescribe,
-            'cryptoNews'  => $cryptoNews,
-            'modelResult' => $modelResult,
+            'fearGreed'      => $fearGreed,
+            'fgDescribe'     => $fgDescribe,
+            'cryptoNews'     => $cryptoNews,
+            'modelResult'    => $modelResult,
 
-            'kfLive'      => $kfLive,
-            'oldLive'     => $oldLive,
+            'kfLive'         => $kfLive,
+            'oldLive'        => $oldLive,
 
-            'hist1d'      => $hist1d,
-            'hist1h'      => $hist1h,
-            'hist15m'     => $hist15m,
+            'hist1d'         => $hist1d,
+            'hist1h'         => $hist1h,
+            'hist15m'        => $hist15m,
 
-            'histOld1d'   => $histOld1d,
-            'histOld1h'   => $histOld1h,
-            'histOld15m'  => $histOld15m,
+            'histOld1d'      => $histOld1d,
+            'histOld1h'      => $histOld1h,
+            'histOld15m'     => $histOld15m,
+
+            'latestAnalysis' => $latestAnalysis,
         ]);
+    }
+
+    /**
+     * Читает последний AI-анализ из storage/app/analytics/analysis_*.txt
+     */
+    private function getLatestAnalysis(): ?array
+    {
+        $dir = storage_path('app/private/analytics');
+
+        if (!is_dir($dir)) {
+            return null;
+        }
+
+        $files = glob($dir . '/analysis_*.txt');
+        if (empty($files)) {
+            return null;
+        }
+
+        // Сортируем по дате изменения — новые первыми
+        usort($files, fn($a, $b) => filemtime($b) - filemtime($a));
+        $latestFile = $files[0];
+
+        $basename = basename($latestFile);
+
+        // Парсим дату из имени: analysis_2026-09-27_10-27-32.txt
+        preg_match('/analysis_(\d{4}-\d{2}-\d{2})_(\d{2}-\d{2}-\d{2})/', $basename, $m);
+
+        $date = null;
+        if (!empty($m[1]) && !empty($m[2])) {
+            try {
+                $date = \Carbon\Carbon::parse($m[1] . ' ' . str_replace('-', ':', $m[2]));
+            } catch (\Throwable $e) {
+                $date = null;
+            }
+        }
+
+        return [
+            'content' => file_get_contents($latestFile),
+            'date'    => $date,
+            'file'    => $basename,
+        ];
     }
 }

@@ -13,6 +13,9 @@ return [
     | a conventional file to locate the various service credentials.
     |
     */
+'analyst' => [
+    'url' => env('ANALYST_URL', 'http://analyst:8001'),
+],
 'binance' => [
     'key'      => env('BINANCE_KEY'),
     'secret'   => env('BINANCE_SECRET'),

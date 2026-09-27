@@ -2,12 +2,13 @@
 // ============================================
 // 1. ПОДКЛЮЧЕНИЕ К БД
 // ============================================
-$host = "localhost";
+$host = "db";
 $dbuser = "root";
-$dbpassword = "";
+$dbpassword = "root";
 $dbname = "volta";
 $dbarticles = "oth";
 $connection = mysqli_connect($host, $dbuser, $dbpassword, $dbname);
+mysqli_set_charset($connection, "utf8mb4");
 
 // ============================================
 // ЗАГРУЗКА KF-СИГНАЛОВ
@@ -261,7 +262,27 @@ require 'coin/telegram_sender.php';
             font-size: 12px;
             color: #f0f6fc;
             border-radius: 8px 8px 0 0;
+            cursor: pointer;
+            user-select: none;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
         }
+        .history-section .header .toggle-icon {
+            font-size: 11px;
+            color: #8b949e;
+            transition: transform 0.2s ease;
+        }
+        .history-section.collapsed .header .toggle-icon {
+            transform: rotate(-90deg);
+        }
+        .history-section .history-body {
+            overflow: hidden;
+        }
+        .history-section.collapsed .history-body {
+            display: none;
+        }
+
         .layer {
             overflow-x: auto;
             max-height: 260px;
@@ -494,128 +515,133 @@ require 'coin/telegram_sender.php';
     </div>
 
     <!-- ============================================
-         БЛОК 5: ИСТОРИЯ KF-СИГНАЛОВ
+         БЛОК 5: ИСТОРИЯ KF-СИГНАЛОВ (сворачиваемый)
          ============================================ -->
-    <div class="history-section">
-        <div class="header">📜 История KF-сигналов</div>
-        <div class="layer" style="padding: 8px;">
-            <div class="kf-grid">
-                <?php
-                $last_1d = mysqli_fetch_assoc(mysqli_query($connection,
-                    "SELECT * FROM `oth_1d` ORDER BY `data` DESC LIMIT 1"));
-                $hist_1d = mysqli_query($connection,
-                    "SELECT `Nazvanie`, `kf`, `data` FROM `oth_1d` 
-                     ORDER BY `data` DESC LIMIT 30");
-                ?>
-                <div class="kf-card">
-                    <div class="tf">📊 1 ДЕНЬ</div>
-                    <div class="kf-content" style="overflow-x: auto;">
-                        <table style="width: 100%; border-collapse: collapse;">
-                            <thead>
-                                <tr>
-                                    <th style="text-align: left; padding: 4px 6px; border-bottom: 1px solid #30363d; color: #8b949e; font-size: 10px;">Монета</th>
-                                    <th style="text-align: left; padding: 4px 6px; border-bottom: 1px solid #30363d; color: #8b949e; font-size: 10px;">KF</th>
-                                    <th style="text-align: left; padding: 4px 6px; border-bottom: 1px solid #30363d; color: #8b949e; font-size: 10px;">Дата UTC</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <?php if ($last_1d): ?>
-                                    <tr style="background: #1c2128;">
-                                        <td><strong>⭐ <?= htmlspecialchars($last_1d['Nazvanie']) ?></strong></td>
-                                        <td><span class="signal-tag <?= $last_1d['kf'] > 55 ? 'danger' : 'none' ?>"><?= round($last_1d['kf'], 1) ?>%</span></td>
-                                        <td style="font-size: 10px; color: #8b949e;"><?= $last_1d['data'] ?></td>
-                                    </tr>
-                                <?php endif; ?>
-                                <?php while ($row = mysqli_fetch_assoc($hist_1d)): ?>
-                                    <tr>
-                                        <td><?= htmlspecialchars($row['Nazvanie']) ?></td>
-                                        <td><span class="signal-tag <?= $row['kf'] > 55 ? 'danger' : 'none' ?>"><?= round($row['kf'], 1) ?>%</span></td>
-                                        <td style="font-size: 10px; color: #8b949e;"><?= $row['data'] ?></td>
-                                    </tr>
-                                <?php endwhile; ?>
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-
-                <?php
-                $last_1h = mysqli_fetch_assoc(mysqli_query($connection,
-                    "SELECT * FROM `oth_1h` ORDER BY `data` DESC LIMIT 1"));
-                $hist_1h = mysqli_query($connection,
-                    "SELECT `Nazvanie`, `kf`, `data` FROM `oth_1h` 
-                     ORDER BY `data` DESC LIMIT 30");
-                ?>
-                <div class="kf-card">
-                    <div class="tf">🕐 1 ЧАС</div>
-                    <div class="kf-content" style="overflow-x: auto;">
-                        <table style="width: 100%; border-collapse: collapse;">
-                            <thead>
-                                <tr>
-                                    <th style="text-align: left; padding: 4px 6px; border-bottom: 1px solid #30363d; color: #8b949e; font-size: 10px;">Монета</th>
-                                    <th style="text-align: left; padding: 4px 6px; border-bottom: 1px solid #30363d; color: #8b949e; font-size: 10px;">KF</th>
-                                    <th style="text-align: left; padding: 4px 6px; border-bottom: 1px solid #30363d; color: #8b949e; font-size: 10px;">Дата UTC</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <?php if ($last_1h): ?>
-                                    <tr style="background: #1c2128;">
-                                        <td><strong>⭐ <?= htmlspecialchars($last_1h['Nazvanie']) ?></strong></td>
-                                        <td><span class="signal-tag <?= $last_1h['kf'] > 45 ? 'warning' : 'none' ?>"><?= round($last_1h['kf'], 1) ?>%</span></td>
-                                        <td style="font-size: 10px; color: #8b949e;"><?= $last_1h['data'] ?></td>
-                                    </tr>
-                                <?php endif; ?>
-                                <?php while ($row = mysqli_fetch_assoc($hist_1h)): ?>
-                                    <tr>
-                                        <td><?= htmlspecialchars($row['Nazvanie']) ?></td>
-                                        <td><span class="signal-tag <?= $row['kf'] > 45 ? 'warning' : 'none' ?>"><?= round($row['kf'], 1) ?>%</span></td>
-                                        <td style="font-size: 10px; color: #8b949e;"><?= $row['data'] ?></td>
-                                    </tr>
-                                <?php endwhile; ?>
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-
-                <?php
-                $last_15m = mysqli_fetch_assoc(mysqli_query($connection,
-                    "SELECT * FROM `oth_15m` ORDER BY `data` DESC LIMIT 1"));
-                $hist_15m = mysqli_query($connection,
-                    "SELECT `Nazvanie`, `kf`, `data` FROM `oth_15m` 
-                     ORDER BY `data` DESC LIMIT 30");
-                ?>
-                <div class="kf-card">
-                    <div class="tf">⏱️ 15 МИНУТ</div>
-                    <div class="kf-content" style="overflow-x: auto;">
-                        <table style="width: 100%; border-collapse: collapse;">
-                            <thead>
-                                <tr>
-                                    <th style="text-align: left; padding: 4px 6px; border-bottom: 1px solid #30363d; color: #8b949e; font-size: 10px;">Монета</th>
-                                    <th style="text-align: left; padding: 4px 6px; border-bottom: 1px solid #30363d; color: #8b949e; font-size: 10px;">KF</th>
-                                    <th style="text-align: left; padding: 4px 6px; border-bottom: 1px solid #30363d; color: #8b949e; font-size: 10px;">Дата UTC</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <?php if ($last_15m): ?>
-                                    <tr style="background: #1c2128;">
-                                        <td><strong>⭐ <?= htmlspecialchars($last_15m['Nazvanie']) ?></strong></td>
-                                        <td><span class="signal-tag <?= $last_15m['kf'] > 45 ? 'warning' : 'none' ?>"><?= round($last_15m['kf'], 1) ?>%</span></td>
-                                        <td style="font-size: 10px; color: #8b949e;"><?= $last_15m['data'] ?></td>
-                                    </tr>
-                                <?php endif; ?>
-                                <?php while ($row = mysqli_fetch_assoc($hist_15m)): ?>
-                                    <tr>
-                                        <td><?= htmlspecialchars($row['Nazvanie']) ?></td>
-                                        <td><span class="signal-tag <?= $row['kf'] > 45 ? 'warning' : 'none' ?>"><?= round($row['kf'], 1) ?>%</span></td>
-                                        <td style="font-size: 10px; color: #8b949e;"><?= $row['data'] ?></td>
-                                    </tr>
-                                <?php endwhile; ?>
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-
-            </div>
+    <div class="history-section collapsed" id="history-kf">
+        <div class="header">
+            <span>📜 История KF-сигналов</span>
+            <span class="toggle-icon">▼</span>
         </div>
+        <div class="history-body">
+            <div class="layer" style="padding: 8px;">
+                <div class="kf-grid">
+                    <?php
+                    $last_1d = mysqli_fetch_assoc(mysqli_query($connection,
+                        "SELECT * FROM `oth_1d` ORDER BY `data` DESC LIMIT 1"));
+                    $hist_1d = mysqli_query($connection,
+                        "SELECT `Nazvanie`, `kf`, `data` FROM `oth_1d` 
+                         ORDER BY `data` DESC LIMIT 30");
+                    ?>
+                    <div class="kf-card">
+                        <div class="tf">📊 1 ДЕНЬ</div>
+                        <div class="kf-content" style="overflow-x: auto;">
+                            <table style="width: 100%; border-collapse: collapse;">
+                                <thead>
+                                    <tr>
+                                        <th style="text-align: left; padding: 4px 6px; border-bottom: 1px solid #30363d; color: #8b949e; font-size: 10px;">Монета</th>
+                                        <th style="text-align: left; padding: 4px 6px; border-bottom: 1px solid #30363d; color: #8b949e; font-size: 10px;">KF</th>
+                                        <th style="text-align: left; padding: 4px 6px; border-bottom: 1px solid #30363d; color: #8b949e; font-size: 10px;">Дата UTC</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <?php if ($last_1d): ?>
+                                        <tr style="background: #1c2128;">
+                                            <td><strong>⭐ <?= htmlspecialchars($last_1d['Nazvanie']) ?></strong></td>
+                                            <td><span class="signal-tag <?= $last_1d['kf'] > 55 ? 'danger' : 'none' ?>"><?= round($last_1d['kf'], 1) ?>%</span></td>
+                                            <td style="font-size: 10px; color: #8b949e;"><?= $last_1d['data'] ?></td>
+                                        </tr>
+                                    <?php endif; ?>
+                                    <?php while ($row = mysqli_fetch_assoc($hist_1d)): ?>
+                                        <tr>
+                                            <td><?= htmlspecialchars($row['Nazvanie']) ?></td>
+                                            <td><span class="signal-tag <?= $row['kf'] > 55 ? 'danger' : 'none' ?>"><?= round($row['kf'], 1) ?>%</span></td>
+                                            <td style="font-size: 10px; color: #8b949e;"><?= $row['data'] ?></td>
+                                        </tr>
+                                    <?php endwhile; ?>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <?php
+                    $last_1h = mysqli_fetch_assoc(mysqli_query($connection,
+                        "SELECT * FROM `oth_1h` ORDER BY `data` DESC LIMIT 1"));
+                    $hist_1h = mysqli_query($connection,
+                        "SELECT `Nazvanie`, `kf`, `data` FROM `oth_1h` 
+                         ORDER BY `data` DESC LIMIT 30");
+                    ?>
+                    <div class="kf-card">
+                        <div class="tf">🕐 1 ЧАС</div>
+                        <div class="kf-content" style="overflow-x: auto;">
+                            <table style="width: 100%; border-collapse: collapse;">
+                                <thead>
+                                    <tr>
+                                        <th style="text-align: left; padding: 4px 6px; border-bottom: 1px solid #30363d; color: #8b949e; font-size: 10px;">Монета</th>
+                                        <th style="text-align: left; padding: 4px 6px; border-bottom: 1px solid #30363d; color: #8b949e; font-size: 10px;">KF</th>
+                                        <th style="text-align: left; padding: 4px 6px; border-bottom: 1px solid #30363d; color: #8b949e; font-size: 10px;">Дата UTC</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <?php if ($last_1h): ?>
+                                        <tr style="background: #1c2128;">
+                                            <td><strong>⭐ <?= htmlspecialchars($last_1h['Nazvanie']) ?></strong></td>
+                                            <td><span class="signal-tag <?= $last_1h['kf'] > 45 ? 'warning' : 'none' ?>"><?= round($last_1h['kf'], 1) ?>%</span></td>
+                                            <td style="font-size: 10px; color: #8b949e;"><?= $last_1h['data'] ?></td>
+                                        </tr>
+                                    <?php endif; ?>
+                                    <?php while ($row = mysqli_fetch_assoc($hist_1h)): ?>
+                                        <tr>
+                                            <td><?= htmlspecialchars($row['Nazvanie']) ?></td>
+                                            <td><span class="signal-tag <?= $row['kf'] > 45 ? 'warning' : 'none' ?>"><?= round($row['kf'], 1) ?>%</span></td>
+                                            <td style="font-size: 10px; color: #8b949e;"><?= $row['data'] ?></td>
+                                        </tr>
+                                    <?php endwhile; ?>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <?php
+                    $last_15m = mysqli_fetch_assoc(mysqli_query($connection,
+                        "SELECT * FROM `oth_15m` ORDER BY `data` DESC LIMIT 1"));
+                    $hist_15m = mysqli_query($connection,
+                        "SELECT `Nazvanie`, `kf`, `data` FROM `oth_15m` 
+                         ORDER BY `data` DESC LIMIT 30");
+                    ?>
+                    <div class="kf-card">
+                        <div class="tf">⏱️ 15 МИНУТ</div>
+                        <div class="kf-content" style="overflow-x: auto;">
+                            <table style="width: 100%; border-collapse: collapse;">
+                                <thead>
+                                    <tr>
+                                        <th style="text-align: left; padding: 4px 6px; border-bottom: 1px solid #30363d; color: #8b949e; font-size: 10px;">Монета</th>
+                                        <th style="text-align: left; padding: 4px 6px; border-bottom: 1px solid #30363d; color: #8b949e; font-size: 10px;">KF</th>
+                                        <th style="text-align: left; padding: 4px 6px; border-bottom: 1px solid #30363d; color: #8b949e; font-size: 10px;">Дата UTC</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <?php if ($last_15m): ?>
+                                        <tr style="background: #1c2128;">
+                                            <td><strong>⭐ <?= htmlspecialchars($last_15m['Nazvanie']) ?></strong></td>
+                                            <td><span class="signal-tag <?= $last_15m['kf'] > 45 ? 'warning' : 'none' ?>"><?= round($last_15m['kf'], 1) ?>%</span></td>
+                                            <td style="font-size: 10px; color: #8b949e;"><?= $last_15m['data'] ?></td>
+                                        </tr>
+                                    <?php endif; ?>
+                                    <?php while ($row = mysqli_fetch_assoc($hist_15m)): ?>
+                                        <tr>
+                                            <td><?= htmlspecialchars($row['Nazvanie']) ?></td>
+                                            <td><span class="signal-tag <?= $row['kf'] > 45 ? 'warning' : 'none' ?>"><?= round($row['kf'], 1) ?>%</span></td>
+                                            <td style="font-size: 10px; color: #8b949e;"><?= $row['data'] ?></td>
+                                        </tr>
+                                    <?php endwhile; ?>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+        </div><!-- /history-body -->
     </div>
 
     <!-- ============================================
@@ -676,113 +702,118 @@ require 'coin/telegram_sender.php';
     </div>
 
     <!-- ============================================
-         БЛОК 7: ИСТОРИЯ ПО ТРЁМ
+         БЛОК 7: ИСТОРИЯ ПО ТРЁМ (сворачиваемый)
          ============================================ -->
-    <div class="history-section">
-        <div class="header">📜 История по трём</div>
-        <div class="layer" style="padding: 8px;">
-            <div class="kf-grid">
-                <?php
-                $hist_old_1d = mysqli_query($connection,
-                    "SELECT `symbol`, `kf`, `created_at` FROM `old_bot_signals_1d` 
-                     ORDER BY `created_at` DESC LIMIT 30");
-                ?>
-                <div class="kf-card">
-                    <div class="tf">📅 1 ДЕНЬ</div>
-                    <div class="kf-content" style="overflow-x: auto;">
-                        <table style="width: 100%; border-collapse: collapse;">
-                            <thead>
-                                <tr>
-                                    <th style="text-align: left; padding: 4px 6px; border-bottom: 1px solid #30363d; color: #8b949e; font-size: 10px;">Монета</th>
-                                    <th style="text-align: left; padding: 4px 6px; border-bottom: 1px solid #30363d; color: #8b949e; font-size: 10px;">KF</th>
-                                    <th style="text-align: left; padding: 4px 6px; border-bottom: 1px solid #30363d; color: #8b949e; font-size: 10px;">Дата UTC</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <?php if (mysqli_num_rows($hist_old_1d) > 0): ?>
-                                    <?php while ($row = mysqli_fetch_assoc($hist_old_1d)): ?>
-                                        <tr>
-                                            <td><?= htmlspecialchars($row['symbol']) ?></td>
-                                            <td><span class="signal-tag <?= $row['kf'] > 55 ? 'danger' : 'none' ?>"><?= round($row['kf'], 1) ?>%</span></td>
-                                            <td style="font-size: 10px; color: #8b949e;"><?= $row['created_at'] ?></td>
-                                        </tr>
-                                    <?php endwhile; ?>
-                                <?php else: ?>
-                                    <tr><td colspan="3" class="no-data">Нет данных</td></tr>
-                                <?php endif; ?>
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-
-                <?php
-                $hist_old_1h = mysqli_query($connection,
-                    "SELECT `symbol`, `kf`, `created_at` FROM `old_bot_signals_1h` 
-                     ORDER BY `created_at` DESC LIMIT 30");
-                ?>
-                <div class="kf-card">
-                    <div class="tf">🕐 1 ЧАС</div>
-                    <div class="kf-content" style="overflow-x: auto;">
-                        <table style="width: 100%; border-collapse: collapse;">
-                            <thead>
-                                <tr>
-                                    <th style="text-align: left; padding: 4px 6px; border-bottom: 1px solid #30363d; color: #8b949e; font-size: 10px;">Монета</th>
-                                    <th style="text-align: left; padding: 4px 6px; border-bottom: 1px solid #30363d; color: #8b949e; font-size: 10px;">KF</th>
-                                    <th style="text-align: left; padding: 4px 6px; border-bottom: 1px solid #30363d; color: #8b949e; font-size: 10px;">Дата UTC</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <?php if (mysqli_num_rows($hist_old_1h) > 0): ?>
-                                    <?php while ($row = mysqli_fetch_assoc($hist_old_1h)): ?>
-                                        <tr>
-                                            <td><?= htmlspecialchars($row['symbol']) ?></td>
-                                            <td><span class="signal-tag <?= $row['kf'] > 45 ? 'warning' : 'none' ?>"><?= round($row['kf'], 1) ?>%</span></td>
-                                            <td style="font-size: 10px; color: #8b949e;"><?= $row['created_at'] ?></td>
-                                        </tr>
-                                    <?php endwhile; ?>
-                                <?php else: ?>
-                                    <tr><td colspan="3" class="no-data">Нет данных</td></tr>
-                                <?php endif; ?>
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-
-                <?php
-                $hist_old_15m = mysqli_query($connection,
-                    "SELECT `symbol`, `kf`, `created_at` FROM `old_bot_signals_15m` 
-                     ORDER BY `created_at` DESC LIMIT 30");
-                ?>
-                <div class="kf-card">
-                    <div class="tf">⏱️ 15 МИНУТ</div>
-                    <div class="kf-content" style="overflow-x: auto;">
-                        <table style="width: 100%; border-collapse: collapse;">
-                            <thead>
-                                <tr>
-                                    <th style="text-align: left; padding: 4px 6px; border-bottom: 1px solid #30363d; color: #8b949e; font-size: 10px;">Монета</th>
-                                    <th style="text-align: left; padding: 4px 6px; border-bottom: 1px solid #30363d; color: #8b949e; font-size: 10px;">KF</th>
-                                    <th style="text-align: left; padding: 4px 6px; border-bottom: 1px solid #30363d; color: #8b949e; font-size: 10px;">Дата UTC</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <?php if (mysqli_num_rows($hist_old_15m) > 0): ?>
-                                    <?php while ($row = mysqli_fetch_assoc($hist_old_15m)): ?>
-                                        <tr>
-                                            <td><?= htmlspecialchars($row['symbol']) ?></td>
-                                            <td><span class="signal-tag <?= $row['kf'] > 45 ? 'warning' : 'none' ?>"><?= round($row['kf'], 1) ?>%</span></td>
-                                            <td style="font-size: 10px; color: #8b949e;"><?= $row['created_at'] ?></td>
-                                        </tr>
-                                    <?php endwhile; ?>
-                                <?php else: ?>
-                                    <tr><td colspan="3" class="no-data">Нет данных</td></tr>
-                                <?php endif; ?>
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-
-            </div>
+    <div class="history-section collapsed" id="history-old">
+        <div class="header">
+            <span>📜 История по трём</span>
+            <span class="toggle-icon">▼</span>
         </div>
+        <div class="history-body">
+            <div class="layer" style="padding: 8px;">
+                <div class="kf-grid">
+                    <?php
+                    $hist_old_1d = mysqli_query($connection,
+                        "SELECT `symbol`, `kf`, `created_at` FROM `old_bot_signals_1d` 
+                         ORDER BY `created_at` DESC LIMIT 30");
+                    ?>
+                    <div class="kf-card">
+                        <div class="tf">📅 1 ДЕНЬ</div>
+                        <div class="kf-content" style="overflow-x: auto;">
+                            <table style="width: 100%; border-collapse: collapse;">
+                                <thead>
+                                    <tr>
+                                        <th style="text-align: left; padding: 4px 6px; border-bottom: 1px solid #30363d; color: #8b949e; font-size: 10px;">Монета</th>
+                                        <th style="text-align: left; padding: 4px 6px; border-bottom: 1px solid #30363d; color: #8b949e; font-size: 10px;">KF</th>
+                                        <th style="text-align: left; padding: 4px 6px; border-bottom: 1px solid #30363d; color: #8b949e; font-size: 10px;">Дата UTC</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <?php if (mysqli_num_rows($hist_old_1d) > 0): ?>
+                                        <?php while ($row = mysqli_fetch_assoc($hist_old_1d)): ?>
+                                            <tr>
+                                                <td><?= htmlspecialchars($row['symbol']) ?></td>
+                                                <td><span class="signal-tag <?= $row['kf'] > 55 ? 'danger' : 'none' ?>"><?= round($row['kf'], 1) ?>%</span></td>
+                                                <td style="font-size: 10px; color: #8b949e;"><?= $row['created_at'] ?></td>
+                                            </tr>
+                                        <?php endwhile; ?>
+                                    <?php else: ?>
+                                        <tr><td colspan="3" class="no-data">Нет данных</td></tr>
+                                    <?php endif; ?>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <?php
+                    $hist_old_1h = mysqli_query($connection,
+                        "SELECT `symbol`, `kf`, `created_at` FROM `old_bot_signals_1h` 
+                         ORDER BY `created_at` DESC LIMIT 30");
+                    ?>
+                    <div class="kf-card">
+                        <div class="tf">🕐 1 ЧАС</div>
+                        <div class="kf-content" style="overflow-x: auto;">
+                            <table style="width: 100%; border-collapse: collapse;">
+                                <thead>
+                                    <tr>
+                                        <th style="text-align: left; padding: 4px 6px; border-bottom: 1px solid #30363d; color: #8b949e; font-size: 10px;">Монета</th>
+                                        <th style="text-align: left; padding: 4px 6px; border-bottom: 1px solid #30363d; color: #8b949e; font-size: 10px;">KF</th>
+                                        <th style="text-align: left; padding: 4px 6px; border-bottom: 1px solid #30363d; color: #8b949e; font-size: 10px;">Дата UTC</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <?php if (mysqli_num_rows($hist_old_1h) > 0): ?>
+                                        <?php while ($row = mysqli_fetch_assoc($hist_old_1h)): ?>
+                                            <tr>
+                                                <td><?= htmlspecialchars($row['symbol']) ?></td>
+                                                <td><span class="signal-tag <?= $row['kf'] > 45 ? 'warning' : 'none' ?>"><?= round($row['kf'], 1) ?>%</span></td>
+                                                <td style="font-size: 10px; color: #8b949e;"><?= $row['created_at'] ?></td>
+                                            </tr>
+                                        <?php endwhile; ?>
+                                    <?php else: ?>
+                                        <tr><td colspan="3" class="no-data">Нет данных</td></tr>
+                                    <?php endif; ?>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <?php
+                    $hist_old_15m = mysqli_query($connection,
+                        "SELECT `symbol`, `kf`, `created_at` FROM `old_bot_signals_15m` 
+                         ORDER BY `created_at` DESC LIMIT 30");
+                    ?>
+                    <div class="kf-card">
+                        <div class="tf">⏱️ 15 МИНУТ</div>
+                        <div class="kf-content" style="overflow-x: auto;">
+                            <table style="width: 100%; border-collapse: collapse;">
+                                <thead>
+                                    <tr>
+                                        <th style="text-align: left; padding: 4px 6px; border-bottom: 1px solid #30363d; color: #8b949e; font-size: 10px;">Монета</th>
+                                        <th style="text-align: left; padding: 4px 6px; border-bottom: 1px solid #30363d; color: #8b949e; font-size: 10px;">KF</th>
+                                        <th style="text-align: left; padding: 4px 6px; border-bottom: 1px solid #30363d; color: #8b949e; font-size: 10px;">Дата UTC</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <?php if (mysqli_num_rows($hist_old_15m) > 0): ?>
+                                        <?php while ($row = mysqli_fetch_assoc($hist_old_15m)): ?>
+                                            <tr>
+                                                <td><?= htmlspecialchars($row['symbol']) ?></td>
+                                                <td><span class="signal-tag <?= $row['kf'] > 45 ? 'warning' : 'none' ?>"><?= round($row['kf'], 1) ?>%</span></td>
+                                                <td style="font-size: 10px; color: #8b949e;"><?= $row['created_at'] ?></td>
+                                            </tr>
+                                        <?php endwhile; ?>
+                                    <?php else: ?>
+                                        <tr><td colspan="3" class="no-data">Нет данных</td></tr>
+                                    <?php endif; ?>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+        </div><!-- /history-body -->
     </div>
 
     <div class="update-info">🔄 Автообновление каждые 15 минут (в 00, 15, 30, 45)</div>
@@ -790,30 +821,58 @@ require 'coin/telegram_sender.php';
 </div>
 
 <script>
-function scheduleReload() {
-    const now = new Date();
-    const minutes = now.getMinutes();
+document.addEventListener('DOMContentLoaded', function () {
 
-    let nextMinute = Math.ceil(minutes / 15) * 15;
-    if (nextMinute === minutes) nextMinute += 15;
-    if (nextMinute >= 60) nextMinute = 0;
+    // ===== Сворачивание/разворачивание секций истории =====
+    function initToggle(id) {
+        var el = document.getElementById(id);
+        if (!el) return;
 
-    const target = new Date();
-    target.setMinutes(nextMinute);
-    target.setSeconds(0);
-    target.setMilliseconds(0);
+        var header = el.querySelector('.header');
+        if (!header) return;
 
-    if (nextMinute === 0) {
-        target.setHours(now.getHours() + 1);
+        // Восстановление состояния из localStorage
+        if (localStorage.getItem(id) === 'open') {
+            el.classList.remove('collapsed');
+        } else {
+            el.classList.add('collapsed');
+        }
+
+        // Клик по заголовку
+        header.addEventListener('click', function () {
+            el.classList.toggle('collapsed');
+            localStorage.setItem(id, el.classList.contains('collapsed') ? 'closed' : 'open');
+        });
     }
 
-    const delay = target.getTime() - now.getTime();
+    initToggle('history-kf');
+    initToggle('history-old');
 
-    console.log('📌 Следующее обновление: ' + target.toLocaleTimeString() + ' (через ' + Math.round(delay/1000) + ' секунд)');
-    setTimeout(function(){ location.reload(); }, delay);
-}
+    // ===== Автообновление каждые 15 минут =====
+    function scheduleReload() {
+        var now = new Date();
+        var minutes = now.getMinutes();
 
-scheduleReload();
+        var nextMinute = Math.ceil(minutes / 15) * 15;
+        if (nextMinute === minutes) nextMinute += 15;
+        if (nextMinute >= 60) nextMinute = 0;
+
+        var target = new Date();
+        target.setMinutes(nextMinute);
+        target.setSeconds(0);
+        target.setMilliseconds(0);
+
+        if (nextMinute === 0) {
+            target.setHours(now.getHours() + 1);
+        }
+
+        var delay = target.getTime() - now.getTime();
+        console.log('📌 Следующее обновление: ' + target.toLocaleTimeString() + ' (через ' + Math.round(delay / 1000) + ' сек)');
+        setTimeout(function () { location.reload(); }, delay);
+    }
+
+    scheduleReload();
+});
 </script>
 
 </body>
