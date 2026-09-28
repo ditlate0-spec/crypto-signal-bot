@@ -10,8 +10,8 @@ use Illuminate\Support\Facades\Log;
 Route::get('/', [DashboardController::class, 'index'])->name('dashboard');
 
 Route::post('/notify/position-closed', function (Request $request) {
-    $TOKEN   = "5608379544:AAHU2hFHcCVbQKD8RJS6HWunN_IeGCDcUmc";
-    $CHAT_ID = 1745395495;
+$TOKEN   = env('TELEGRAM_BOT_TOKEN');
+$CHAT_ID = env('TELEGRAM_CHAT_ID');
 
     $data = $request->json()->all();
 

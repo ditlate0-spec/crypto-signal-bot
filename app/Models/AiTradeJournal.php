@@ -3,7 +3,7 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
-
+ 
 class AiTradeJournal extends Model
 {
     protected $table = 'ai_trade_journal';

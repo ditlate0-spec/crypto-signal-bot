@@ -20,8 +20,8 @@ if (!$connection) {
 
 mysqli_set_charset($connection, 'utf8mb4');
 
-$TOKEN   = " ";
-$CHAT_ID =  ;
+$TOKEN   = getenv('TELEGRAM_BOT_TOKEN') ?: env('TELEGRAM_BOT_TOKEN');
+$CHAT_ID = getenv('TELEGRAM_CHAT_ID') ?: env('TELEGRAM_CHAT_ID');
 $SYMBOL  = 'BTCUSDT';
 
 $data_kf  = ['BTCUSDT' => ['1d' => 0, '1h' => 0, '15m' => 0], 'ETHUSDT' => ['1d' => 0, '1h' => 0, '15m' => 0]];
