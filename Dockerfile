@@ -15,7 +15,15 @@ RUN python3 -m pip install --no-cache-dir --break-system-packages \
 WORKDIR /var/www
 COPY . /var/www
 
+# Права при сборке (нужны для первичной инициализации)
 RUN chown -R www-data:www-data /var/www/storage /var/www/bootstrap/cache
 
+# Копируем entrypoint и делаем его исполняемым
+COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
+# Подменяем точку входа
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 CMD ["php-fpm"]
+
 EXPOSE 9000
