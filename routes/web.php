@@ -8,115 +8,111 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 
 Route::get('/', [DashboardController::class, 'index'])->name('dashboard');
-
 Route::post('/notify/position-closed', function (Request $request) {
-$TOKEN   = env('TELEGRAM_BOT_TOKEN');
-$CHAT_ID = env('TELEGRAM_CHAT_ID');
+    \Log::info('[notify] webhook received', ['body' => $request->json()->all()]);
+
+    $TOKEN   = env('TELEGRAM_TOKEN');
+    $CHAT_ID = env('TELEGRAM_CHAT_ID');
 
     $data = $request->json()->all();
 
-    $symbol    = $data['symbol'] ?? 'BTCUSDT';
-    $exitPrice = (float)($data['exit_price'] ?? 0);
+    $symbol      = $data['symbol'] ?? 'BTCUSDT';
+    $exitPrice   = (float)($data['exit_price'] ?? 0);
     $pnlFromRust = (float)($data['pnl'] ?? 0);
-    $reason    = $data['reason'] ?? 'unknown';
+    $reason      = $data['reason'] ?? 'unknown';
 
-    // ============================================
-    // 1. ОБНОВЛЕНИЕ AI-ЖУРНАЛА (НОВОЕ)
-    // ============================================
-    $journal = AiTradeJournal::where('symbol', $symbol)
-        ->whereNull('exit_time')
-        ->orderByDesc('id')
+    // 1. Ищем РЕАЛЬНУЮ открытую сделку (самую старую)
+    $trade = Trade::where('symbol', $symbol)
+        ->where('status', 'open')
+        ->orderBy('opened_at', 'asc')
         ->first();
 
-    $netPnl = null;
-    $pnlPct = null;
-    $fees   = null;
-    $isWin  = null;
-    $duration = null;
+    $journal = null;
     $exitReason = 'UNKNOWN';
+    $netPnl = null;
 
-    if ($journal) {
-        $entryPrice = (float)$journal->entry_price;
-        $qty        = (float)$journal->quantity;
-        $side       = $journal->side;
+    if ($trade) {
+        // 2. Ищем журнал по trade_id
+        $journal = AiTradeJournal::where('trade_id', $trade->id)->first();
 
-        // PnL считаем сами
-        if ($side === 'SHORT') {
-            $pnl = ($entryPrice - $exitPrice) * $qty;
-        } else {
-            $pnl = ($exitPrice - $entryPrice) * $qty;
+        // Fallback: если не нашли, ищем по времени
+        if (!$journal) {
+            $journal = AiTradeJournal::where('symbol', $symbol)
+                ->whereNull('exit_time')
+                ->where('entry_time', '>=', $trade->opened_at)
+                ->orderBy('id', 'asc')
+                ->first();
         }
 
-        // Комиссии Binance Futures: 0.04% taker × 2
-        $fees = ($entryPrice + $exitPrice) * $qty * 0.0004;
-        $netPnl = $pnl - $fees;
+        if ($journal) {
+            $entryPrice = (float)$journal->entry_price;
 
-        // PnL в % от маржи
-        $margin = $qty > 0 ? ($entryPrice * $qty) / max(1, $journal->leverage) : 0;
-        $pnlPct = $margin > 0 ? ($netPnl / $margin) * 100 : 0;
+            // 3. PnL берём ИЗ RUST (Binance уже посчитал)
+            $netPnl = $pnlFromRust;
 
-        // Причина выхода
-        $exitReason = match($reason) {
-            'STOP_MARKET'          => 'SL',
-            'TRAILING_STOP_MARKET' => 'TRAILING_SL',
-            'TAKE_PROFIT_MARKET'   => 'TP',
-            default                => 'UNKNOWN',
-        };
+$exitReason = match($reason) {
+    'STOP_MARKET'          => 'SL',
+    'TRAILING_STOP_MARKET' => 'TRAILING_SL',
+    'TAKE_PROFIT_MARKET'   => 'TP',
+    'MARKET'               => 'TRAILING_SL',   // ← Binance часто шлёт MARKET для трейлинга
+    default                => 'UNKNOWN',
+};
 
-        // Уточнение по цене
-        if ($journal->sl_price > 0
-            && abs($exitPrice - $journal->sl_price) / $journal->sl_price < 0.001) {
-            $exitReason = 'SL';
-        }
-        if ($netPnl > 0 && $exitReason === 'SL') {
-            $exitReason = 'TRAILING_SL';
-        }
+// Уточнение по цене, если reason всё ещё UNKNOWN
+if ($exitReason === 'UNKNOWN' && $entryPrice > 0 && $exitPrice > 0) {
+    if ($exitPrice > $entryPrice) {
+        $exitReason = 'SL';               // шорт закрылся выше входа = убыток
+    } elseif ($exitPrice < $entryPrice) {
+        $exitReason = 'TRAILING_SL';      // шорт закрылся ниже входа = прибыль
+    }
+}
+            $journal->update([
+                'exit_price'       => $exitPrice,
+                'exit_time'        => now(),
+                'exit_reason'      => $exitReason,
+                'duration_seconds' => $journal->entry_time
+                    ? now()->diffInSeconds($journal->entry_time)
+                    : null,
+                'pnl'              => $netPnl,
+                'pnl_pct'          => $entryPrice > 0
+                    ? round((($entryPrice - $exitPrice) / $entryPrice) * 100, 4)
+                    : null,
+                'is_win'           => $netPnl > 0,
+            ]);
 
-        // Длительность
-        $duration = $journal->entry_time
-            ? now()->diffInSeconds($journal->entry_time)
-            : null;
-
-        // Обновляем ai_trade_journal
-        $journal->update([
-            'exit_price'       => $exitPrice,
-            'exit_time'        => now(),
-            'exit_reason'      => $exitReason,
-            'duration_seconds' => $duration,
-            'pnl'              => $pnl,
-            'pnl_pct'          => round($pnlPct, 4),
-            'fees'             => $fees,
-            'is_win'           => $netPnl > 0,
-        ]);
-
-        // Обновляем trades
-        if ($journal->trade_id) {
-            Trade::where('id', $journal->trade_id)->update([
+            $trade->update([
                 'status'    => 'closed',
                 'closed_at' => now(),
                 'pnl'       => $netPnl,
             ]);
-        }
 
-        Log::info('[notify] journal updated', [
-            'journal_id'  => $journal->id,
-            'exit_reason' => $exitReason,
-            'net_pnl'     => $netPnl,
+            Log::info('[notify] journal updated', [
+                'journal_id'  => $journal->id,
+                'trade_id'    => $trade->id,
+                'exit_reason' => $exitReason,
+                'net_pnl'     => $netPnl,
+            ]);
+        } else {
+            Log::warning('[notify] journal not found for trade', [
+                'trade_id' => $trade->id,
+            ]);
+        }
+    } else {
+        Log::warning('[notify] no open trade found for symbol', [
+            'symbol' => $symbol,
         ]);
     }
 
-    // ============================================
-    // 2. TELEGRAM (КАК БЫЛО — НЕ ТРОГАЕМ)
-    // ============================================
+    // Telegram
     $reasonText = match($reason) {
-        'STOP_MARKET'           => 'Стоп-лосс',
-        'TRAILING_STOP_MARKET'  => 'Трейлинг-стоп',
-        'TAKE_PROFIT_MARKET'    => 'Тейк-профит',
-        default                 => $reason,
+        'STOP_MARKET'          => 'Стоп-лосс',
+        'TRAILING_STOP_MARKET' => 'Трейлинг-стоп',
+        'TAKE_PROFIT_MARKET'   => 'Тейк-профит',
+        default                => $reason,
     };
 
-    $pnlFormatted = number_format((float)$pnlFromRust, 2);
-    $pnlSign = (float)$pnlFromRust >= 0 ? '🟢' : '🔴';
+    $pnlFormatted = number_format($pnlFromRust, 2);
+    $pnlSign = $pnlFromRust >= 0 ? '🟢' : '🔴';
 
     $msg  = "🔔 <b>ПОЗИЦИЯ ЗАКРЫТА</b>\n";
     $msg .= "Символ: {$symbol}\n";
@@ -124,13 +120,12 @@ $CHAT_ID = env('TELEGRAM_CHAT_ID');
     $msg .= "Цена выхода: \${$exitPrice}\n";
     $msg .= "{$pnlSign} PnL: \${$pnlFormatted}";
 
-    $url = "https://api.telegram.org/bot$TOKEN/sendMessage";
-    $ch = curl_init($url);
+    $ch = curl_init("https://api.telegram.org/bot$TOKEN/sendMessage");
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query([
         'chat_id'    => $CHAT_ID,
         'text'       => $msg,
-        'parse_mode' => 'HTML'
+        'parse_mode' => 'HTML',
     ]));
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_exec($ch);
@@ -138,7 +133,8 @@ $CHAT_ID = env('TELEGRAM_CHAT_ID');
 
     return response()->json([
         'status'      => 'ok',
-        'journal_id'  => $journal->id ?? null,
+        'journal_id'  => $journal?->id,
+        'trade_id'    => $trade?->id,
         'exit_reason' => $exitReason,
         'net_pnl'     => $netPnl,
     ]);

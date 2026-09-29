@@ -45,7 +45,7 @@ class TradingBotService
     ) {}
 
     // ============================================
-    // ГЛАВНЫЙ МЕТОД
+    // ГЛАВНЫЙ МЕТОД — вызывается каждые 15 минут
     // ============================================
     public function run(): array
     {
@@ -77,7 +77,7 @@ class TradingBotService
             return ['verdict' => $verdict, 'traded' => false];
         }
 
-        // 4. Хэш свечи
+        // 4. Проверяем хэш свечи (одна сделка на 15 минут)
         $candleTs   = floor(time() / 900) * 900;
         $candleTime = gmdate('Y-m-d H:i', $candleTs);
         $signalHash = md5('trade_' . $candleTime);
@@ -87,13 +87,13 @@ class TradingBotService
             return ['verdict' => $verdict, 'traded' => false, 'reason' => 'already_traded'];
         }
 
-        // 5. Свечи
+        // 5. Скачиваем свечи с Binance
         $candles = $this->fetchCandles();
         if (!$candles) {
             return ['verdict' => $verdict, 'traded' => false, 'reason' => 'no_candles'];
         }
 
-        // 6. Модель
+        // 6. Спрашиваем модель
         $modelResult = $this->askModel($candles, $kf);
         if (!$modelResult) {
             $this->telegram->send("⚠️ Модель недоступна. Пропускаю сигнал.");
@@ -191,14 +191,17 @@ class TradingBotService
     }
 
     // ============================================
-    // ЗАГРУЗКА KF-ДАННЫХ
+    // ЗАГРУЗКА KF-ДАННЫХ ИЗ БД
     // ============================================
     private function loadKfData(): array
     {
         $symbols = ['BTCUSDT', 'ETHUSDT'];
         $tfs     = ['1d', '1h', '15m'];
 
-        $result = ['kf' => [], 'old' => []];
+        $result = [
+            'kf'  => [],
+            'old' => [],
+        ];
 
         foreach ($symbols as $sym) {
             foreach ($tfs as $tf) {
@@ -210,6 +213,10 @@ class TradingBotService
         return $result;
     }
 
+    // ============================================
+    // KF — последний сигнал бота №1 (OTH)
+    // С проверкой свежести: 1d = 2 суток, 1h = 3 часа, 15m = 45 минут
+    // ============================================
     private function getLastKf(string $symbol, string $tf): float
     {
         $model = match ($tf) {
@@ -218,13 +225,24 @@ class TradingBotService
             '15m' => Oth15m::class,
         };
 
+        $maxAge = match ($tf) {
+            '1d'  => now()->subDays(2),
+            '1h'  => now()->subHours(3),
+            '15m' => now()->subMinutes(45),
+        };
+
         $row = $model::where('Nazvanie', $symbol)
+            ->where('data', '>=', $maxAge)
             ->orderBy('data', 'desc')
             ->first();
 
         return $row ? (float)$row->kf : 0.0;
     }
 
+    // ============================================
+    // KF — последний сигнал бота №2 (OLD)
+    // С проверкой свежести: 1d = 2 суток, 1h = 3 часа, 15m = 45 минут
+    // ============================================
     private function getLastOldBotKf(string $symbol, string $tf): float
     {
         $model = match ($tf) {
@@ -233,7 +251,14 @@ class TradingBotService
             '15m' => OldBotSignal15m::class,
         };
 
+        $maxAge = match ($tf) {
+            '1d'  => now()->subDays(2),
+            '1h'  => now()->subHours(3),
+            '15m' => now()->subMinutes(45),
+        };
+
         $row = $model::where('symbol', $symbol)
+            ->where('created_at', '>=', $maxAge)
             ->orderBy('created_at', 'desc')
             ->first();
 
@@ -253,7 +278,7 @@ class TradingBotService
 
         $btc15Ready = ($kf['BTCUSDT']['15m'] > self::THRESH_BTC_15M_OTH && $old['BTCUSDT']['15m'] > self::THRESH_BTC_15M_OLD);
         $eth15Ready = ($kf['ETHUSDT']['15m'] > self::THRESH_BTC_15M_OTH && $old['ETHUSDT']['15m'] > self::THRESH_ETH_15M_OLD);
-        $trigger15Ready = ($btc15Ready && $eth15Ready);
+        $trigger15mReady = ($btc15Ready && $eth15Ready);
 
         $enter = false;
         $text  = '';
@@ -262,14 +287,14 @@ class TradingBotService
             if ($btcHourStrong) {
                 $text = "🚀 <b>ВХОД РАЗРЕШЕН: ТОРГУЕМ НА 1H!</b>\n(1D одобрен + 1H одобрен)";
                 $enter = true;
-            } elseif ($trigger15Ready) {
+            } elseif ($trigger15mReady) {
                 $text = "⚡️ <b>ВХОД РАЗРЕШЕН: ТОРГУЕМ НА 15M!</b>\n(1D одобрен + Боты BTC/ETH дали синхронный импульс)";
                 $enter = true;
             } else {
                 $text = "⏸ <b>ЗАБОР (ЖДЕМ СИНХРОНИЗАЦИИ)</b>\n(День сильный, но час слабый и нет парного сигнала)";
             }
         } elseif ($btcHourStrong) {
-            if ($trigger15Ready) {
+            if ($trigger15mReady) {
                 $text = "⚡️ <b>ВХОД РАЗРЕШЕН: СКАЛЬПИНГ НА 15M!</b>\n(1H одобрен + Боты BTC/ETH одновременно)";
                 $enter = true;
             } else {
@@ -283,7 +308,7 @@ class TradingBotService
     }
 
     // ============================================
-    // СВЕЧИ С BINANCE
+    // СКАЧИВАЕМ 3 СВЕЧИ С BINANCE
     // ============================================
     private function fetchCandles(): ?array
     {
@@ -305,7 +330,7 @@ class TradingBotService
     }
 
     // ============================================
-    // МОДЕЛЬ
+    // СПРАШИВАЕМ МОДЕЛЬ
     // ============================================
     private function askModel(array $candles, array $kfData): ?array
     {
@@ -406,7 +431,7 @@ class TradingBotService
         $trailActivatePrice = round($entryPrice * (1 - self::TRAIL_ACTIVATE_PERCENT / 100) / $tickSize) * $tickSize;
         $trailActivatePrice = number_format($trailActivatePrice, $decimals, '.', '');
 
-        // Сбрасываем старые заявки
+        // Сбрасываем старые условные заявки
         $this->binance->cancelAllAlgoOrders($symbol);
 
         $slResult = $this->binance->setStopLoss($symbol, $slPrice);

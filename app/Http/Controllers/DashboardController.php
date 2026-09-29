@@ -34,15 +34,15 @@ class DashboardController extends Controller
         // 1. ПРОГОНЯЕМ KF-БОТОВ
         //    (возвращают живой расчёт, пишут в БД при KF > порога)
         // ============================================
-        $kfLive  = [];
-        $oldLive = [];
+$kfLive  = [];
+$oldLive = [];
 
-        try {
-            $kfLive  = $this->kfBot->runAll();
-            $oldLive = $this->oldBot->runAll();
-        } catch (\Throwable $e) {
-            \Log::error('[Dashboard] bot run failed: ' . $e->getMessage());
-        }
+try {
+    $kfLive  = $this->kfBot->runAll();
+    $oldLive = $this->oldBot->runAll();
+} catch (\Throwable $e) {
+    \Log::error('[Dashboard] bot run failed: ' . $e->getMessage());
+}
 
         // ============================================
         // 1.5. ТОРГОВЫЙ БОТ

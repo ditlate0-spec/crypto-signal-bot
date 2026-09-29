@@ -89,12 +89,20 @@ async fn handle_order_update(event: &Value, config: &UserStreamConfig) {
     let side = order["S"].as_str().unwrap_or("");
     let avg_price = order["ap"].as_str().unwrap_or("0");
     let realized_pnl = order["rp"].as_str().unwrap_or("0");
+    let reduce_only = order["R"].as_bool().unwrap_or(false);
+
+    // ЛОГИРУЕМ ВСЁ
+    tracing::info!(
+        symbol, order_type, order_status, side, avg_price, realized_pnl, reduce_only,
+        "ORDER_TRADE_UPDATE"
+    );
 
     if symbol != config.symbol { return; }
 
     let is_closing = order_type == "STOP_MARKET"
         || order_type == "TRAILING_STOP_MARKET"
-        || order_type == "TAKE_PROFIT_MARKET";
+        || order_type == "TAKE_PROFIT_MARKET"
+        || (order_type == "MARKET" && reduce_only);
 
     if is_closing && order_status == "FILLED" && side == "BUY" {
         tracing::info!(symbol, order_type, avg_price, realized_pnl, "position closed");
