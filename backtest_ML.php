@@ -1,9 +1,9 @@
 <?php
 // ============================================
-// БЭКТЕСТ С ML-ФИЛЬТРОМ.
-// После сигнала бота вызывается predict_one.py.
-// Сделка открывается, только если ML даёт TAKE (или TAKE+MAYBE).
-// Жёсткий TP/SL, одна сделка за раз — как в backtest_off_ML.php.
+// БЭКТЕСТ: БОТЫ → ML → ИНДИКАТОРЫ (3 этапа)
+// Этап 1: боты дали сигнал.
+// Этап 2: ML проверяет → TAKE/SKIP.
+// Этап 3: если ML SKIP → индикаторы (через check_indicators.php).
 // ============================================
 
 ob_implicit_flush(true);
@@ -13,24 +13,34 @@ set_time_limit(0);
 ini_set('memory_limit', '4G');
 
 // ============================================
-// НАСТРОЙКИ ML
+// НАСТРОЙКИ
 // ============================================
-$PYTHON_BIN       = 'python3';                 // или 'python'
-$PREDICT_SCRIPT   = __DIR__ . '/predict_one.py';
-$ML_TMP_DIR       = __DIR__ . '/ml_tmp';
-$ML_TIMEOUT_SEC   = 30;                        // таймаут на один вызов python
+$PYTHON_BIN        = 'python3';
+$PREDICT_SCRIPT    = __DIR__ . '/predict_one.py';
+$INDICATOR_SCRIPT  = __DIR__ . '/check_indicators.php';
+$ML_TMP_DIR        = __DIR__ . '/ml_tmp';
+$ML_TIMEOUT_SEC    = 30;
 
-// Какие решения модели считать «входом»
-// 'TAKE'        — только TAKE (строго)
-// 'TAKE_MAYBE'  — TAKE + MAYBE
 $ML_ACCEPT_MODE   = 'TAKE';
-
-// Если python упал/недоступен:
-// true  — игнорировать ML и входить (как в чистом бэктесте)
-// false — пропускать сигнал
 $ML_FAIL_OPEN     = false;
 
 if (!is_dir($ML_TMP_DIR)) @mkdir($ML_TMP_DIR, 0777, true);
+
+// ============================================
+// CSV-ЛОГ
+// ============================================
+$ANALYZE_FILE = __DIR__ . '/ml_signals_log.csv';
+$analyze_fp = fopen($ANALYZE_FILE, 'w');
+fputcsv($analyze_fp, [
+    'signal_time', 'entry_price', 'result', 'candles', 'pnl_pct',
+    'ml_prob', 'ml_decision', 'rsi', 'cum5', 'bulls10', 'bb_pct_b', 'rsi_decision',
+    'final_action', 'source',
+    'c1_open', 'c1_high', 'c1_low', 'c1_close', 'c1_vol',
+    'c2_open', 'c2_high', 'c2_low', 'c2_close', 'c2_vol',
+    'c3_open', 'c3_high', 'c3_low', 'c3_close', 'c3_vol',
+    'kf_btc_15m_oth', 'kf_btc_15m_old', 'kf_eth_15m_oth', 'kf_eth_15m_old',
+    'kf_btc_1h_oth', 'kf_btc_1h_old', 'kf_btc_1d_oth', 'kf_btc_1d_old',
+]);
 
 // ============================================
 // ПУТИ К ИСТОРИИ
@@ -41,27 +51,27 @@ $history_1h_file      = __DIR__ . '/history_1h.json';
 $history_1d_file      = __DIR__ . '/history_1d.json';
 
 // ============================================
-// ПОРОГИ СТРАТЕГИИ (те же, что в backtest_off_ML.php)
+// ПОРОГИ СТРАТЕГИИ
 // ============================================
 $BASE = [
-    'THRESH_DAY_OTH'     => 20,
+    'THRESH_DAY_OTH'     => 0,
     'THRESH_DAY_OLD'     => 50,
-    'THRESH_HOUR_OTH'    => 10,
-    'THRESH_HOUR_OLD'    => 40,
-    'THRESH_BTC_15M_OTH' => 30,
-    'THRESH_BTC_15M_OLD' => 55,
+    'THRESH_HOUR_OTH'    => 0,
+    'THRESH_HOUR_OLD'    => 50,
+    'THRESH_BTC_15M_OTH' => 0,
+    'THRESH_BTC_15M_OLD' => 75,
     'THRESH_ETH_15M_OTH' => 0,
-    'THRESH_ETH_15M_OLD' => 70,
+    'THRESH_ETH_15M_OLD' => 90,
 ];
 
-$SL_PCT      = 0.5;
+$SL_PCT      = 0.9;
 $TP_PCT      = -0.23;
-$MAX_CANDLES = 70;
+$MAX_CANDLES = 170;
 
 // ============================================
 // ЗАГРУЗКА
 // ============================================
-foreach ([$history_15m_btc_file, $history_15m_eth_file, $history_1h_file, $history_1d_file, $PREDICT_SCRIPT] as $f) {
+foreach ([$history_15m_btc_file, $history_15m_eth_file, $history_1h_file, $history_1d_file, $PREDICT_SCRIPT, $INDICATOR_SCRIPT] as $f) {
     if (!file_exists($f)) die("❌ Не найден: $f\n");
 }
 
@@ -75,11 +85,10 @@ if (empty($h15_btc) || empty($h15_eth) || empty($h1h) || empty($h1d)) die("❌ �
 echo "✅ 15m BTC: " . count($h15_btc) . " свечей\n";
 echo "✅ 15m ETH: " . count($h15_eth) . " свечей\n";
 echo "✅ 1h BTC:  " . count($h1h) . " свечей\n";
-echo "✅ 1d BTC:  " . count($h1d) . " свечей\n";
-echo "🤖 ML режим: $ML_ACCEPT_MODE, fail_open=" . ($ML_FAIL_OPEN ? 'true' : 'false') . "\n\n";
+echo "✅ 1d BTC:  " . count($h1d) . " свечей\n\n";
 
 // ============================================
-// ФУНКЦИИ KF (скопированы 1:1 из backtest_off_ML.php)
+// ФУНКЦИИ KF (те же, что раньше — копируй из своего файла)
 // ============================================
 function calcKF_oth_1d($cena1, $cena2, $cena3, $ob1, $ob2, $ob3, $mincena1, $mincena2, $mincena3) {
     $PrIzm1 = (($cena2 - $cena1) / $cena1) * 100;
@@ -441,9 +450,6 @@ function simulateShort($h15, $start_idx, $entry_price, $SL_PCT, $TP_PCT, $MAX_CA
     return ['result'=>'TIMEOUT','pnl_pct'=>$change,'candles'=>$limit - $start_idx];
 }
 
-/**
- * Упаковка одной свечи в формат, ожидаемый predict_one.py.
- */
 function packCandle($c) {
     return [
         'open'  => (float)$c[1],
@@ -454,10 +460,9 @@ function packCandle($c) {
     ];
 }
 
-/**
- * Вызов predict_one.py. Возвращает массив с полями probability_tp, decision, threshold
- * либо null при ошибке.
- */
+// ============================================
+// ВЫЗОВ PYTHON (ML)
+// ============================================
 function callPredictor($python_bin, $script, $tmp_dir, $payload, $timeout_sec, &$err_out = null) {
     $in_path  = $tmp_dir . '/ml_in_' . getmypid() . '.json';
     $out_path = $tmp_dir . '/ml_out_' . getmypid() . '.json';
@@ -467,11 +472,7 @@ function callPredictor($python_bin, $script, $tmp_dir, $payload, $timeout_sec, &
     $cmd = escapeshellarg($python_bin) . ' ' . escapeshellarg($script) . ' '
          . escapeshellarg($in_path) . ' ' . escapeshellarg($out_path) . ' 2>&1';
 
-    $descriptors = [
-        0 => ['pipe','r'],
-        1 => ['pipe','w'],
-        2 => ['pipe','w'],
-    ];
+    $descriptors = [0 => ['pipe','r'], 1 => ['pipe','w'], 2 => ['pipe','w']];
     $proc = proc_open($cmd, $descriptors, $pipes);
     if (!is_resource($proc)) {
         $err_out = "proc_open failed";
@@ -483,11 +484,10 @@ function callPredictor($python_bin, $script, $tmp_dir, $payload, $timeout_sec, &
     stream_set_blocking($pipes[2], false);
 
     $start = microtime(true);
-    $stdout = ''; $stderr = '';
     while (true) {
         $status = proc_get_status($proc);
-        $stdout .= stream_get_contents($pipes[1]);
-        $stderr .= stream_get_contents($pipes[2]);
+        stream_get_contents($pipes[1]);
+        stream_get_contents($pipes[2]);
         if (!$status['running']) break;
         if (microtime(true) - $start > $timeout_sec) {
             proc_terminate($proc, 9);
@@ -503,7 +503,7 @@ function callPredictor($python_bin, $script, $tmp_dir, $payload, $timeout_sec, &
     proc_close($proc);
 
     if (!file_exists($out_path)) {
-        $err_out = "no output file. stderr: " . trim($stderr);
+        $err_out = "no output";
         @unlink($in_path);
         return null;
     }
@@ -512,15 +512,38 @@ function callPredictor($python_bin, $script, $tmp_dir, $payload, $timeout_sec, &
     @unlink($in_path); @unlink($out_path);
 
     $res = json_decode($raw, true);
-    if (!is_array($res)) {
-        $err_out = "bad json: " . substr($raw, 0, 200);
-        return null;
-    }
-    return $res;
+    return is_array($res) ? $res : null;
 }
 
 // ============================================
-// ПРЕДРАСЧЁТ KF ДЛЯ ВСЕХ СВЕЧЕЙ
+// ВЫЗОВ PHP-ИНДИКАТОРОВ
+// ============================================
+function callIndicators($php_bin, $script, $tmp_dir, $signal_time, &$err_out = null) {
+    $in_path  = $tmp_dir . '/ind_in_' . getmypid() . '.json';
+    $out_path = $tmp_dir . '/ind_out_' . getmypid() . '.json';
+
+    file_put_contents($in_path, json_encode(['signal_time' => $signal_time]));
+
+    $cmd = escapeshellarg($php_bin) . ' ' . escapeshellarg($script) . ' '
+         . escapeshellarg($in_path) . ' ' . escapeshellarg($out_path) . ' 2>&1';
+
+    $output = shell_exec($cmd);
+
+    if (!file_exists($out_path)) {
+        $err_out = "no output. cmd: $cmd";
+        @unlink($in_path);
+        return null;
+    }
+
+    $raw = file_get_contents($out_path);
+    @unlink($in_path); @unlink($out_path);
+
+    $res = json_decode($raw, true);
+    return is_array($res) ? $res : null;
+}
+
+// ============================================
+// ПРЕДРАСЧЁТ KF
 // ============================================
 echo "🔧 Предрасчёт KF для всех свечей...\n";
 
@@ -540,68 +563,30 @@ for ($i = 2; $i < $N; $i++) {
     $c2 = $h15_btc[$i - 1];
     $c3 = $h15_btc[$i];
 
-    $btc_15m_oth_arr[$i] = calcKF_oth_15m(
-        (float)$c1[4], (float)$c2[4], (float)$c3[4],
-        (float)$c1[5], (float)$c2[5], (float)$c3[5],
-        (float)$c1[3], (float)$c2[3], (float)$c3[3]
-    );
-    $btc_15m_old_arr[$i] = calcKF_old_15m(
-        (float)$c1[4], (float)$c2[4], (float)$c3[4],
-        (float)$c1[5], (float)$c2[5], (float)$c3[5],
-        (float)$c1[3], (float)$c2[3], (float)$c3[3]
-    );
+    $btc_15m_oth_arr[$i] = calcKF_oth_15m((float)$c1[4], (float)$c2[4], (float)$c3[4], (float)$c1[5], (float)$c2[5], (float)$c3[5], (float)$c1[3], (float)$c2[3], (float)$c3[3]);
+    $btc_15m_old_arr[$i] = calcKF_old_15m((float)$c1[4], (float)$c2[4], (float)$c3[4], (float)$c1[5], (float)$c2[5], (float)$c3[5], (float)$c1[3], (float)$c2[3], (float)$c3[3]);
 
     $ts = $h15_btc[$i][0];
 
     $idx_eth = findCandleAt($h15_eth, $ts);
     if ($idx_eth >= 2) {
-        $e1 = $h15_eth[$idx_eth - 2];
-        $e2 = $h15_eth[$idx_eth - 1];
-        $e3 = $h15_eth[$idx_eth];
-        $eth_15m_oth_arr[$i] = calcKF_oth_15m(
-            (float)$e1[4], (float)$e2[4], (float)$e3[4],
-            (float)$e1[5], (float)$e2[5], (float)$e3[5],
-            (float)$e1[3], (float)$e2[3], (float)$e3[3]
-        );
-        $eth_15m_old_arr[$i] = calcKF_old_15m(
-            (float)$e1[4], (float)$e2[4], (float)$e3[4],
-            (float)$e1[5], (float)$e2[5], (float)$e3[5],
-            (float)$e1[3], (float)$e2[3], (float)$e3[3]
-        );
+        $e1 = $h15_eth[$idx_eth - 2]; $e2 = $h15_eth[$idx_eth - 1]; $e3 = $h15_eth[$idx_eth];
+        $eth_15m_oth_arr[$i] = calcKF_oth_15m((float)$e1[4], (float)$e2[4], (float)$e3[4], (float)$e1[5], (float)$e2[5], (float)$e3[5], (float)$e1[3], (float)$e2[3], (float)$e3[3]);
+        $eth_15m_old_arr[$i] = calcKF_old_15m((float)$e1[4], (float)$e2[4], (float)$e3[4], (float)$e1[5], (float)$e2[5], (float)$e3[5], (float)$e1[3], (float)$e2[3], (float)$e3[3]);
     }
 
     $idx_1h = findCandleAt($h1h, $ts);
     if ($idx_1h >= 2) {
-        $h1c1 = $h1h[$idx_1h - 2];
-        $h1c2 = $h1h[$idx_1h - 1];
-        $h1c3 = $h1h[$idx_1h];
-        $btc_1h_oth_arr[$i] = calcKF_oth_1h(
-            (float)$h1c1[4], (float)$h1c2[4], (float)$h1c3[4],
-            (float)$h1c1[5], (float)$h1c2[5], (float)$h1c3[5],
-            (float)$h1c1[3], (float)$h1c2[3], (float)$h1c3[3]
-        );
-        $btc_1h_old_arr[$i] = calcKF_old_1h(
-            (float)$h1c1[4], (float)$h1c2[4], (float)$h1c3[4],
-            (float)$h1c1[5], (float)$h1c2[5], (float)$h1c3[5],
-            (float)$h1c1[3], (float)$h1c2[3], (float)$h1c3[3]
-        );
+        $h1c1 = $h1h[$idx_1h - 2]; $h1c2 = $h1h[$idx_1h - 1]; $h1c3 = $h1h[$idx_1h];
+        $btc_1h_oth_arr[$i] = calcKF_oth_1h((float)$h1c1[4], (float)$h1c2[4], (float)$h1c3[4], (float)$h1c1[5], (float)$h1c2[5], (float)$h1c3[5], (float)$h1c1[3], (float)$h1c2[3], (float)$h1c3[3]);
+        $btc_1h_old_arr[$i] = calcKF_old_1h((float)$h1c1[4], (float)$h1c2[4], (float)$h1c3[4], (float)$h1c1[5], (float)$h1c2[5], (float)$h1c3[5], (float)$h1c1[3], (float)$h1c2[3], (float)$h1c3[3]);
     }
 
     $idx_1d = findCandleAt($h1d, $ts);
     if ($idx_1d >= 2) {
-        $d1 = $h1d[$idx_1d - 2];
-        $d2 = $h1d[$idx_1d - 1];
-        $d3 = $h1d[$idx_1d];
-        $btc_1d_oth_arr[$i] = calcKF_oth_1d(
-            (float)$d1[4], (float)$d2[4], (float)$d3[4],
-            (float)$d1[5], (float)$d2[5], (float)$d3[5],
-            (float)$d1[3], (float)$d2[3], (float)$d3[3]
-        );
-        $btc_1d_old_arr[$i] = calcKF_old_1d(
-            (float)$d1[4], (float)$d2[4], (float)$d3[4],
-            (float)$d1[5], (float)$d2[5], (float)$d3[5],
-            (float)$d1[3], (float)$d2[3], (float)$d3[3]
-        );
+        $d1 = $h1d[$idx_1d - 2]; $d2 = $h1d[$idx_1d - 1]; $d3 = $h1d[$idx_1d];
+        $btc_1d_oth_arr[$i] = calcKF_oth_1d((float)$d1[4], (float)$d2[4], (float)$d3[4], (float)$d1[5], (float)$d2[5], (float)$d3[5], (float)$d1[3], (float)$d2[3], (float)$d3[3]);
+        $btc_1d_old_arr[$i] = calcKF_old_1d((float)$d1[4], (float)$d2[4], (float)$d3[4], (float)$d1[5], (float)$d2[5], (float)$d3[5], (float)$d1[3], (float)$d2[3], (float)$d3[3]);
     }
 }
 
@@ -619,30 +604,29 @@ $THRESH_BTC_15M_OLD = $BASE['THRESH_BTC_15M_OLD'];
 $THRESH_ETH_15M_OTH = $BASE['THRESH_ETH_15M_OTH'];
 $THRESH_ETH_15M_OLD = $BASE['THRESH_ETH_15M_OLD'];
 
-$total_signals = 0;   // всего сигналов бота
-$ml_taken      = 0;   // модель дала TAKE (или TAKE+MAYBE)
-$ml_skipped    = 0;   // модель отклонила
-$ml_errors     = 0;   // ошибки вызова python
+$total_signals = 0;
 
-$tp_count   = 0; $sl_count   = 0; $timeout_count = 0;
+$ml_taken = 0; $ml_skipped = 0;
+$rsi_taken = 0; $rsi_skipped = 0;
+
+$tp_count = 0; $sl_count = 0; $timeout_count = 0;
 $sum_pnl = 0.0;
 
-// Отдельная статистика по сигналам, которые модель пропустила — чтобы видеть,
-// сколько профита/убытка мы «спасли» или «потеряли».
-$skip_tp_count = 0; $skip_sl_count = 0; $skip_timeout_count = 0;
-$skip_sum_pnl = 0.0;
+$tp_by_ml = 0; $sl_by_ml = 0;
+$tp_by_rsi = 0; $sl_by_rsi = 0;
+
+$skip_tp = 0; $skip_sl = 0;
 
 $next_available_idx = 2;
 
 echo "🔍 Прогон сигналов...\n";
-echo "============================================================================================================\n";
-echo " Дата                | ML prob | ML dec  | ML thr | Result  | Candles | PnL      | Action\n";
-echo "============================================================================================================\n";
+echo str_repeat("=", 140) . "\n";
+echo " Дата                | ML prob | ML dec  | RSI    | cum5    | bulls | bb%B   | RSI dec | Result  | PnL      | Action\n";
+echo str_repeat("=", 140) . "\n";
 
 $t_start = microtime(true);
 
 for ($i = 2; $i < $N - 2; $i++) {
-
     if ($i < $next_available_idx) continue;
 
     $btc_day_strong  = ($btc_1d_oth_arr[$i] > $THRESH_DAY_OTH && $btc_1d_old_arr[$i] > $THRESH_DAY_OLD);
@@ -667,15 +651,21 @@ for ($i = 2; $i < $N - 2; $i++) {
 
     $total_signals++;
 
-    // ---- Формируем payload для модели ----
+    $c1 = $h15_btc[$i - 2];
+    $c2 = $h15_btc[$i - 1];
+    $c3 = $h15_btc[$i];
+
+    // ============================================
+    // ЭТАП 1: БОТЫ УЖЕ ДАЛИ СИГНАЛ (мы в цикле)
+    // ============================================
+
+    // ============================================
+    // ЭТАП 2: ML
+    // ============================================
     $payload = [
         'signal_time' => $signal_time_str,
         'entry_price' => $entry_price,
-        'candles' => [
-            packCandle($h15_btc[$i - 2]),
-            packCandle($h15_btc[$i - 1]),
-            packCandle($h15_btc[$i]),
-        ],
+        'candles' => [packCandle($c1), packCandle($c2), packCandle($c3)],
         'kf_data' => [
             'kf_btc_15m_oth' => $btc_15m_oth_arr[$i],
             'kf_btc_15m_old' => $btc_15m_old_arr[$i],
@@ -688,130 +678,162 @@ for ($i = 2; $i < $N - 2; $i++) {
         ],
     ];
 
-    // ---- Вызов модели ----
     $ml_err = null;
     $ml_res = callPredictor($PYTHON_BIN, $PREDICT_SCRIPT, $ML_TMP_DIR, $payload, $ML_TIMEOUT_SEC, $ml_err);
 
-    $ml_prob = null; $ml_dec = 'ERR'; $ml_thr = null;
-    $accept = false;
-
+    $ml_prob = null; $ml_dec = 'ERR';
     if ($ml_res === null) {
-        $ml_errors++;
-        if ($ML_FAIL_OPEN) {
-            $accept = true;
-            $ml_dec = 'FAIL_OPEN';
-        } else {
-            $accept = false;
-            $ml_dec = 'FAIL_CLOSE';
-        }
+        $ml_dec = 'FAIL';
     } else {
         $ml_prob = $ml_res['probability_tp'] ?? null;
         $ml_dec  = $ml_res['decision'] ?? 'ERR';
-        $ml_thr  = $ml_res['threshold'] ?? null;
-
-        if ($ml_dec === 'TAKE') {
-            $accept = true;
-        } elseif ($ml_dec === 'MAYBE' && $ML_ACCEPT_MODE === 'TAKE_MAYBE') {
-            $accept = true;
-        } else {
-            $accept = false;
-        }
     }
 
-    // ---- Симуляция (считаем её всегда, чтобы видеть упущенный PnL) ----
-    $sim = simulateShort(
-        $h15_btc,
-        $entry_idx + 1,
-        $entry_price,
-        $SL_PCT,
-        $TP_PCT,
-        $MAX_CANDLES
-    );
+    $ml_accept = ($ml_dec === 'TAKE');
 
-    // ---- Учёт ----
-    if ($accept) {
-        $ml_taken++;
-        if ($sim['result'] === 'TP')       $tp_count++;
-        elseif ($sim['result'] === 'SL')   $sl_count++;
-        else                                $timeout_count++;
-        $sum_pnl += $sim['pnl_pct'];
+// ============================================
+// ЭТАП 3: ИНДИКАТОРЫ (только для SKIP от ML в диапазоне [0.7, 0.9))
+// ============================================
+$rsi = null; $cum5 = null; $bulls10 = null; $bb_pct_b = null; $rsi_dec = '-';
+$rsi_accept = false;
 
-        // Следующая сделка возможна после закрытия этой
-        $next_available_idx = $entry_idx + $sim['candles'] + 1;
-        $action = 'TAKE';
-    } else {
-        $ml_skipped++;
-        if ($sim['result'] === 'TP')       $skip_tp_count++;
-        elseif ($sim['result'] === 'SL')   $skip_sl_count++;
-        else                                $skip_timeout_count++;
-        $skip_sum_pnl += $sim['pnl_pct'];
+// RSI проверяется только если:
+//   - ML не приняла сигнал (SKIP)
+//   - ml_prob в диапазоне [0.7, 0.9)
+$check_rsi = (!$ml_accept && $ml_prob !== null && $ml_prob >= 0.83 && $ml_prob < 0.9);
 
-        // ВАЖНО: если модель отклонила сигнал — мы НЕ занимаем позицию,
-        // но следующий сигнал бота может прийти раньше окончания этой
-        // виртуальной сделки. Чтобы чистый ML-бэктест «одна сделка за раз»
-        // оставался корректным, сдвигаем индекс так же, как если бы
-        // сделка была открыта. Если хотите разрешить накладывать сделки —
-        // закомментируйте строку ниже.
-        $next_available_idx = $entry_idx + $sim['candles'] + 1;
-        $action = 'SKIP';
-    }
+if ($check_rsi) {
+    $ind_res = callIndicators('php', $INDICATOR_SCRIPT, $ML_TMP_DIR, $signal_time_str);
 
-    $ml_prob_str = is_null($ml_prob) ? '   -   ' : sprintf('%6.4f', $ml_prob);
-    $ml_thr_str  = is_null($ml_thr)  ? '   -  ' : sprintf('%5.3f', $ml_thr);
-
-    printf(" %s | %s | %-7s | %s | %-7s | %7d | %+7.3f%% | %s%s\n",
-        $signal_time_str,
-        $ml_prob_str,
-        $ml_dec,
-        $ml_thr_str,
-        $sim['result'],
-        $sim['candles'],
-        $sim['pnl_pct'],
-        $action,
-        ($ml_err && $action === 'SKIP') ? " ($ml_err)" : ""
-    );
+if ($ind_res && !isset($ind_res['error'])) {
+    $rsi      = $ind_res['rsi'] ?? null;
+    $cum5     = $ind_res['cum5'] ?? null;
+    $bulls10  = $ind_res['bulls10'] ?? null;
+    $bb_pct_b = $ind_res['bb_pct_b'] ?? null;
+    $rsi_dec  = $ind_res['rsi_decision'] ?? '-';
+    $rsi_accept = ($rsi_dec === 'TAKE');
 }
+}
+// ============================================
+// ФИНАЛЬНОЕ РЕШЕНИЕ — оба фильтра обязательны
+// ============================================
+$final = 'SKIP';
+$source = '-';
+if ($ml_accept) {
+    $final = 'TAKE'; $source = 'ml';
+} elseif ($rsi_accept) {
+    $final = 'TAKE'; $source = 'rsi';
+} else {
+    $final = 'SKIP'; $source = '-';
+}
+    // ============================================
+    // СИМУЛЯЦИЯ
+    // ============================================
+    $sim = simulateShort($h15_btc, $entry_idx + 1, $entry_price, $SL_PCT, $TP_PCT, $MAX_CANDLES);
+
+    // ============================================
+    // УЧЁТ
+    // ============================================
+    if ($final === 'TAKE') {
+        if ($source === 'ml') {
+            $ml_taken++;
+            if ($sim['result'] === 'TP') $tp_by_ml++;
+            else if ($sim['result'] === 'SL') $sl_by_ml++;
+        } else {
+            $rsi_taken++;
+            if ($sim['result'] === 'TP') $tp_by_rsi++;
+            else if ($sim['result'] === 'SL') $sl_by_rsi++;
+        }
+
+        if ($sim['result'] === 'TP') $tp_count++;
+        else if ($sim['result'] === 'SL') $sl_count++;
+        else $timeout_count++;
+
+        $sum_pnl += $sim['pnl_pct'];
+        $next_available_idx = $entry_idx + $sim['candles'] + 1;
+    } else {
+        if ($source === 'ml') $ml_skipped++;
+        else $rsi_skipped++;
+
+        if ($sim['result'] === 'TP') $skip_tp++;
+        else if ($sim['result'] === 'SL') $skip_sl++;
+
+        $next_available_idx = $entry_idx + $sim['candles'] + 1;
+    }
+
+    // ============================================
+    // CSV
+    // ============================================
+    fputcsv($analyze_fp, [
+        $signal_time_str, $entry_price, $sim['result'], $sim['candles'], $sim['pnl_pct'],
+        $ml_prob, $ml_dec,
+        $rsi, $cum5, $bulls10, $bb_pct_b, $rsi_dec,
+        $final, $source,
+        (float)$c1[1], (float)$c1[2], (float)$c1[3], (float)$c1[4], (float)$c1[5],
+        (float)$c2[1], (float)$c2[2], (float)$c2[3], (float)$c2[4], (float)$c2[5],
+        (float)$c3[1], (float)$c3[2], (float)$c3[3], (float)$c3[4], (float)$c3[5],
+        $btc_15m_oth_arr[$i], $btc_15m_old_arr[$i],
+        $eth_15m_oth_arr[$i], $eth_15m_old_arr[$i],
+        $btc_1h_oth_arr[$i], $btc_1h_old_arr[$i],
+        $btc_1d_oth_arr[$i], $btc_1d_old_arr[$i],
+    ]);
+
+    // ============================================
+    // ВЫВОД
+    // ============================================
+printf(" %s | %s | %-7s | %s | %s | %s | %s | %-7s | %-7s | %+7.3f%% | %s (%s)\n",
+    $signal_time_str,
+    is_null($ml_prob) ? '   -  ' : sprintf('%6.4f', $ml_prob),
+    $ml_dec,
+    is_null($rsi) ? '   -  ' : sprintf('%6.1f', $rsi),
+    is_null($cum5) ? '   -   ' : sprintf('%+6.2f', $cum5),
+    is_null($bulls10) ? '  -  ' : sprintf('%4d', $bulls10),
+    is_null($bb_pct_b) ? '  -   ' : sprintf('%5.3f', $bb_pct_b),
+    $rsi_dec,
+    $sim['result'],
+    $sim['pnl_pct'],
+    $final,
+    $source
+);
+}
+
+fclose($analyze_fp);
 
 $elapsed = round(microtime(true) - $t_start, 2);
 
-// ============================================
-// ИТОГОВАЯ СТАТИСТИКА
-// ============================================
 echo "\n";
-echo "============================================================================================================\n";
+echo str_repeat("=", 100) . "\n";
 echo "  ИТОГИ (за {$elapsed}с)\n";
-echo "============================================================================================================\n\n";
+echo str_repeat("=", 100) . "\n\n";
 
-$wr = $total_signals > 0 ? ($tp_count / max(1,$ml_taken)) * 100 : 0;
-$exp = $ml_taken > 0 ? $sum_pnl / $ml_taken : 0;
+echo "ВСЕГО СИГНАЛОВ БОТОВ: {$total_signals}\n\n";
 
-echo "ВСЕ СИГНАЛЫ БОТА:\n";
-echo "  Всего сигналов:        {$total_signals}\n";
-echo "  ML взял (TAKE" . ($ML_ACCEPT_MODE==='TAKE_MAYBE' ? '+MAYBE' : '') . "):  {$ml_taken}\n";
-echo "  ML пропустил:          {$ml_skipped}\n";
-echo "  Ошибок вызова Python:  {$ml_errors}\n\n";
-
-echo "РЕЗУЛЬТАТЫ СДЕЛОК, КОТОРЫЕ ВЗЯЛ ML:\n";
-echo "  TP:                    {$tp_count}\n";
-echo "  SL:                    {$sl_count}\n";
-echo "  TIMEOUT:               {$timeout_count}\n";
+echo "ЭТАП 2 — ML-МОДЕЛЬ:\n";
+echo "  TAKE:      {$ml_taken}\n";
+echo "  SKIP:      {$ml_skipped}\n";
 if ($ml_taken > 0) {
-    echo "  Winrate (TP/взятые):   " . round($wr, 2) . "%\n";
-    echo "  Expectancy:            " . round($exp, 4) . "%\n";
-    echo "  Суммарный PnL:         " . round($sum_pnl, 2) . "%\n";
+    echo "  Из них TP: {$tp_by_ml}, SL: {$sl_by_ml}\n";
 }
 
-echo "\nУПУЩЕННЫЕ СИГНАЛЫ (ML сказал SKIP/MAYBE):\n";
-echo "  Всего пропущено:       {$ml_skipped}\n";
-echo "  Из них TP:             {$skip_tp_count}\n";
-echo "  Из них SL:             {$skip_sl_count}\n";
-echo "  Из них TIMEOUT:        {$skip_timeout_count}\n";
-if ($ml_skipped > 0) {
-    $skip_wr = ($skip_tp_count / $ml_skipped) * 100;
-    $skip_exp = $skip_sum_pnl / $ml_skipped;
-    echo "  Winrate (пропущ.):     " . round($skip_wr, 2) . "%\n";
-    echo "  Expectancy (пропущ.):  " . round($skip_exp, 4) . "%\n";
-    echo "  Суммарный PnL:         " . round($skip_sum_pnl, 2) . "%\n";
+echo "\nЭТАП 3 — ИНДИКАТОРЫ (на SKIP от ML):\n";
+echo "  Проверено: {$ml_skipped}\n";
+echo "  TAKE:      {$rsi_taken}\n";
+echo "  SKIP:      {$rsi_skipped}\n";
+if ($rsi_taken > 0) {
+    echo "  Из них TP: {$tp_by_rsi}, SL: {$sl_by_rsi}\n";
 }
 
-echo "\n============================================================================================================\n";
+echo "\nФИНАЛ (ML + RSI):\n";
+echo "  Всего TAKE: {$tp_count} TP + {$sl_count} SL + {$timeout_count} TO\n";
+$total_taken = $tp_count + $sl_count + $timeout_count;
+if ($total_taken > 0) {
+    echo "  Winrate:    " . round($tp_count / $total_taken * 100, 2) . "%\n";
+    echo "  PnL:        " . round($sum_pnl, 2) . "%\n";
+}
+
+echo "\nПРОПУЩЕНО:\n";
+echo "  Всего SKIP: " . ($ml_skipped + $rsi_skipped) . "\n";
+echo "  Из них TP:  {$skip_tp}, SL: {$skip_sl}\n";
+
+echo "\nCSV: {$ANALYZE_FILE}\n";
+echo str_repeat("=", 100) . "\n";

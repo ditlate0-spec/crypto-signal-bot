@@ -1,9 +1,9 @@
 """
-predict_one.py — принимает JSON-файл с данными одного сигнала,
-возвращает JSON с вероятностью TP от обученной модели.
+predict_one.py — только ML-модель.
+RSI-фильтр убран — работает через check_indicators.php.
 
-Использование:
-    python predict_one.py input.json output.json
+Вход: JSON с signal_time, entry_price, candles, kf_data.
+Выход: JSON с probability_tp, decision, source.
 """
 
 import sys
@@ -13,52 +13,38 @@ import joblib
 import numpy as np
 import pandas as pd
 
-# ============================================
-# НАСТРОЙКИ
-# ============================================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MODEL_PATH    = os.path.join(BASE_DIR, "tp_filter_model.pkl")
 FEATURES_PATH = os.path.join(BASE_DIR, "tp_filter_features.pkl")
-META_PATH     = os.path.join(BASE_DIR, "tp_filter_meta.pkl")
+SCALER_PATH   = os.path.join(BASE_DIR, "tp_filter_scaler.pkl")
 
-# Дефолтный порог — используется, если meta.pkl недоступен
-DEFAULT_THRESHOLD = 0.84
-MAYBE_MARGIN = 0.05
+DEFAULT_THRESHOLD = 0.9
+MAYBE_MARGIN = 0.01
 
-# ============================================
-# ЗАГРУЗКА МОДЕЛИ, ПРИЗНАКОВ И ПОРОГА
-# ============================================
 if not os.path.exists(MODEL_PATH):
-    print(f"ERROR: не найден файл модели: {MODEL_PATH}", file=sys.stderr)
+    print(f"ERROR: {MODEL_PATH} not found", file=sys.stderr)
     sys.exit(2)
 
 if not os.path.exists(FEATURES_PATH):
-    print(f"ERROR: не найден файл признаков: {FEATURES_PATH}", file=sys.stderr)
+    print(f"ERROR: {FEATURES_PATH} not found", file=sys.stderr)
     sys.exit(2)
 
 _model = joblib.load(MODEL_PATH)
 _feature_names = joblib.load(FEATURES_PATH)
 
-# Порог читаем из meta.pkl — чтобы синхронизироваться с train_final.py
-if os.path.exists(META_PATH):
-    try:
-        _meta = joblib.load(META_PATH)
-        THRESHOLD = float(_meta.get('threshold', DEFAULT_THRESHOLD))
-        print(f"INFO: threshold loaded from meta: {THRESHOLD}", file=sys.stderr)
-    except Exception as e:
-        print(f"WARN: cannot load meta ({e}), using default {DEFAULT_THRESHOLD}", file=sys.stderr)
-        THRESHOLD = DEFAULT_THRESHOLD
+if os.path.exists(SCALER_PATH):
+    _scaler = joblib.load(SCALER_PATH)
+    print(f"INFO: scaler loaded", file=sys.stderr)
 else:
-    print(f"WARN: meta not found, using default threshold {DEFAULT_THRESHOLD}", file=sys.stderr)
-    THRESHOLD = DEFAULT_THRESHOLD
+    _scaler = None
+    print(f"INFO: no scaler", file=sys.stderr)
+
+THRESHOLD = DEFAULT_THRESHOLD
 
 
-# ============================================
-# ПОСТРОЕНИЕ ПРИЗНАКОВ
-# ============================================
 def candle_feats(c, idx):
     o, h, l, cl = float(c['open']), float(c['high']), float(c['low']), float(c['close'])
-    rng = (h - l)
+    rng = h - l
     if rng == 0:
         rng = np.nan
 
@@ -138,9 +124,6 @@ def build_row(data):
     return row
 
 
-# ============================================
-# ПРЕДСКАЗАНИЕ
-# ============================================
 def predict(data):
     row = build_row(data)
     X = pd.DataFrame([row])
@@ -148,28 +131,37 @@ def predict(data):
     for col in _feature_names:
         if col not in X.columns:
             X[col] = np.nan
-
     X = X[_feature_names].fillna(0)
 
-    proba = float(_model.predict_proba(X)[0, 1])
+    if _scaler is not None:
+        X_arr = _scaler.transform(X)
+    else:
+        X_arr = X.values
 
-    if proba >= THRESHOLD:
+    # Пробуем сначала predict_proba (LGBM), потом decision_function (OneClass)
+    try:
+        proba_a = float(_model.predict_proba(X_arr)[0, 1])
+    except AttributeError:
+        raw_score = float(_model.decision_function(X_arr)[0])
+        proba_a = 1.0 / (1.0 + np.exp(-raw_score * 10.0))
+
+    proba_a = round(float(proba_a), 4)
+
+    if proba_a >= THRESHOLD:
         decision = "TAKE"
-    elif proba >= THRESHOLD - MAYBE_MARGIN:
+    elif proba_a >= THRESHOLD - MAYBE_MARGIN:
         decision = "MAYBE"
     else:
         decision = "SKIP"
 
     return {
-        "probability_tp": round(proba, 4),
+        "probability_tp": proba_a,
         "threshold": THRESHOLD,
         "decision": decision,
+        "source": "ml",
     }
 
 
-# ============================================
-# MAIN
-# ============================================
 def main():
     if len(sys.argv) != 3:
         print("Usage: python predict_one.py input.json output.json", file=sys.stderr)
@@ -182,26 +174,17 @@ def main():
         with open(input_path, 'r', encoding='utf-8') as f:
             data = json.load(f)
     except Exception as e:
-        print(f"ERROR: не удалось прочитать {input_path}: {e}", file=sys.stderr)
+        print(f"ERROR: {e}", file=sys.stderr)
         sys.exit(3)
 
     try:
         result = predict(data)
     except Exception as e:
-        print(f"ERROR: prediction failed: {e}", file=sys.stderr)
-        result = {
-            "probability_tp": None,
-            "threshold": THRESHOLD,
-            "decision": "ERROR",
-            "error": str(e),
-        }
+        print(f"ERROR: {e}", file=sys.stderr)
+        result = {"probability_tp": None, "threshold": THRESHOLD, "decision": "ERROR", "error": str(e)}
 
-    try:
-        with open(output_path, 'w', encoding='utf-8') as f:
-            json.dump(result, f, ensure_ascii=False)
-    except Exception as e:
-        print(f"ERROR: не удалось записать {output_path}: {e}", file=sys.stderr)
-        sys.exit(4)
+    with open(output_path, 'w', encoding='utf-8') as f:
+        json.dump(result, f, ensure_ascii=False)
 
     print(json.dumps(result, ensure_ascii=False))
 

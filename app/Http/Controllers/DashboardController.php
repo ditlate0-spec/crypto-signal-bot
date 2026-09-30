@@ -15,105 +15,145 @@ use App\Services\KfCalculatorService;
 use App\Services\BinanceService;
 use App\Services\NewsService;
 use App\Services\TradingBotService;
+use App\Services\IndicatorsService;
 
 class DashboardController extends Controller
 {
     public function __construct(
         private FearGreedService    $fearGreed,
         private ModelService        $model,
-        private KfBotService        $kfBot,      // Бот №1 → oth_*
-        private KfCalculatorService $oldBot,     // Бот №2 → old_bot_signals_*
+        private KfBotService        $kfBot,
+        private KfCalculatorService $oldBot,
         private BinanceService      $binance,
         private NewsService         $news,
-        private TradingBotService   $tradingBot, // Торговый бот: вердикт → модель → шорт
+        private TradingBotService   $tradingBot,
+        private IndicatorsService   $indicators,
     ) {}
 
     public function index()
     {
-        // ============================================
-        // 1. ПРОГОНЯЕМ KF-БОТОВ
-        //    (возвращают живой расчёт, пишут в БД при KF > порога)
-        // ============================================
-$kfLive  = [];
-$oldLive = [];
-
-try {
-    $kfLive  = $this->kfBot->runAll();
-    $oldLive = $this->oldBot->runAll();
-} catch (\Throwable $e) {
-    \Log::error('[Dashboard] bot run failed: ' . $e->getMessage());
-}
+        $t = microtime(true);
+        $log = function (string $label) use (&$t) {
+            \Log::info("[Dashboard] $label: " . round(microtime(true) - $t, 2) . "s");
+            $t = microtime(true);
+        };
 
         // ============================================
-        // 1.5. ТОРГОВЫЙ БОТ
-        //      читает свежие KF из БД → вердикт → модель → шорт
-        //      Защита от повторов: TelegramSent::alreadySent()
-        //      (одна сделка на 15-минутную свечу)
+        // 1. KF-БОТЫ
         // ============================================
+        $kfLive  = [];
+        $oldLive = [];
         try {
-            $this->tradingBot->run();
+            $kfLive  = $this->kfBot->runAll();
+            $oldLive = $this->oldBot->runAll();
         } catch (\Throwable $e) {
-            \Log::error('[Dashboard] TradingBot failed: ' . $e->getMessage());
+            \Log::error('[Dashboard] KF bots failed: ' . $e->getMessage());
+        }
+        $log('KF bots');
+
+        // ============================================
+        // 1.5. ПРОВЕРКА СИГНАЛА (без открытия сделки)
+        //      ML и RSI внутри — только если боты дали сигнал
+        // ============================================
+$signal = null;
+try {
+    // Преобразуем live-данные к виду, который ожидает buildVerdict (числа, а не массивы)
+    $kfForCheck = ['kf' => [], 'old' => []];
+    foreach (['BTCUSDT', 'ETHUSDT'] as $sym) {
+        foreach (['1d', '1h', '15m'] as $tf) {
+            $kfForCheck['kf'][$sym][$tf]  = (float)($kfLive[$sym][$tf]['kf']  ?? 0);
+            $kfForCheck['old'][$sym][$tf] = (float)($oldLive[$sym][$tf]['kf'] ?? 0);
+        }
+    }
+
+    $signal = $this->tradingBot->checkSignal($kfForCheck);
+} catch (\Throwable $e) {
+    \Log::error('[Dashboard] checkSignal failed: ' . $e->getMessage());
+}
+        $log('checkSignal');
+
+        $verdict     = $signal['verdict']     ?? null;
+        $modelResult = $signal['modelResult'] ?? null;
+        $indicators  = $signal['indicators']  ?? null;
+        $checkRsi    = $signal['check_rsi']   ?? false;
+        $approved    = $signal['approved']    ?? false;
+        $source      = $signal['source']      ?? 'skip';
+        $mlProb      = $signal['prob']        ?? null;
+        $mlAccept    = $signal['ml_accept']   ?? false;
+        $skipReason  = $signal['reason']      ?? null;
+
+        // Для blade: если RSI не считался — объясняем почему
+        if ($indicators === null || (!$checkRsi && !isset($indicators['error']))) {
+            if (!$verdict || !$verdict['enter']) {
+                $indicators = [
+                    'skipped' => true,
+                    'reason'  => 'Нет сигнала ботов',
+                    'ml_prob' => null,
+                    'ml_dec'  => null,
+                ];
+            } else {
+                $indicators = [
+                    'skipped' => true,
+                    'reason'  => $mlAccept ? 'ML TAKE' : 'ML вне серой зоны',
+                    'ml_prob' => $mlProb,
+                    'ml_dec'  => $mlAccept ? 'TAKE' : 'SKIP',
+                ];
+            }
         }
 
         // ============================================
         // 2. FEAR & GREED
         // ============================================
-        $fearGreed = $this->fearGreed->get();
+        $fearGreed  = $this->fearGreed->get();
         $fgDescribe = null;
         if (!isset($fearGreed['error'])) {
             $fgDescribe = $this->fearGreed->describe($fearGreed['value']);
         }
+        $log('FearGreed');
 
         // ============================================
         // 3. НОВОСТИ
         // ============================================
         $cryptoNews = $this->news->getSentiment('BTC');
+        $log('News');
 
         // ============================================
-        // 4. МОДЕЛЬ (для отображения на дашборде)
-        // ============================================
-        $modelResult = null;
-        try {
-            $candles = $this->binance->getCandles('BTCUSDT', '15m', 4);
-            if ($candles['success'] && count($candles['data']) >= 4) {
-                $k  = $candles['data'];
-                $c3 = $k[3];
-                $modelResult = $this->model->predict(
-                    [$k[1], $k[2], $k[3]],
-                    (float)$c3[4],
-                    gmdate('Y-m-d H:i:s', (int)($c3[0] / 1000))
-                );
-            }
-        } catch (\Throwable $e) {
-            \Log::error('[Dashboard] model failed: ' . $e->getMessage());
-            $modelResult = null;
-        }
-
-        // ============================================
-        // 5. ИСТОРИЯ KF-СИГНАЛОВ (Бот №1)
+        // 4. ИСТОРИЯ KF-СИГНАЛОВ (Бот №1)
         // ============================================
         $hist1d  = Oth1d::orderBy('data', 'desc')->limit(30)->get();
         $hist1h  = Oth1h::orderBy('data', 'desc')->limit(30)->get();
         $hist15m = Oth15m::orderBy('data', 'desc')->limit(30)->get();
 
         // ============================================
-        // 6. ИСТОРИЯ ПО ТРЁМ (Бот №2)
+        // 5. ИСТОРИЯ ПО ТРЁМ (Бот №2)
         // ============================================
         $histOld1d  = OldBotSignal1d::orderBy('created_at', 'desc')->limit(30)->get();
         $histOld1h  = OldBotSignal1h::orderBy('created_at', 'desc')->limit(30)->get();
         $histOld15m = OldBotSignal15m::orderBy('created_at', 'desc')->limit(30)->get();
+        $log('History SQL');
 
         // ============================================
-        // 7. AI-АНАЛИЗ (последний файл из storage/app/analytics/)
+        // 6. AI-АНАЛИЗ
         // ============================================
         $latestAnalysis = $this->getLatestAnalysis();
+        $log('Analysis file');
+        $log('TOTAL');
 
         return view('dashboard', [
             'fearGreed'      => $fearGreed,
             'fgDescribe'     => $fgDescribe,
             'cryptoNews'     => $cryptoNews,
+
+            // Сигнал
+            'verdict'        => $verdict,
             'modelResult'    => $modelResult,
+            'indicators'     => $indicators,
+            'checkRsi'       => $checkRsi,
+            'approved'       => $approved,
+            'source'         => $source,
+            'mlProb'         => $mlProb,
+            'mlAccept'       => $mlAccept,
+            'skipReason'     => $skipReason,
 
             'kfLive'         => $kfLive,
             'oldLive'        => $oldLive,
@@ -130,9 +170,6 @@ try {
         ]);
     }
 
-    /**
-     * Читает последний AI-анализ из storage/app/analytics/analysis_*.txt
-     */
     private function getLatestAnalysis(): ?array
     {
         $dir = storage_path('app/private/analytics');
@@ -146,13 +183,11 @@ try {
             return null;
         }
 
-        // Сортируем по дате изменения — новые первыми
         usort($files, fn($a, $b) => filemtime($b) - filemtime($a));
         $latestFile = $files[0];
 
         $basename = basename($latestFile);
 
-        // Парсим дату из имени: analysis_2026-09-27_10-27-32.txt
         preg_match('/analysis_(\d{4}-\d{2}-\d{2})_(\d{2}-\d{2}-\d{2})/', $basename, $m);
 
         $date = null;

@@ -141,7 +141,7 @@
     <div class="section">
         <div class="section-title">🎯 Наша модель (фильтр TP/SL)</div>
         @if(!$modelResult)
-            <div style="color: #8b949e; font-size: 11px;">⏳ Модель недоступна</div>
+            <div style="color: #8b949e; font-size: 11px;">⏳ Нет сигнала от ботов</div>
         @else
             @php
                 $prob = $modelResult['probability_tp'];
@@ -167,7 +167,97 @@
             </div>
         @endif
     </div>
+{{-- БЛОК: RSI-ИНДИКАТОРЫ --}}
+<div class="section">
+    <div class="section-title">📊 RSI-фильтр (текущая свеча)</div>
 
+    @if($indicators && isset($indicators['skipped']))
+        {{-- RSI не проверялся по условию $check_rsi --}}
+        <div style="color: #8b949e; font-size: 11px;">
+            ⏭ RSI не проверялся: {{ $indicators['reason'] }}
+            @if(($indicators['ml_prob'] ?? null) !== null)
+                <br>
+                <span style="font-size: 10px;">
+                    ML prob = <strong style="color: #f0f6fc;">{{ round($indicators['ml_prob'], 4) }}</strong>
+                    • dec = <strong style="color: #f0f6fc;">{{ $indicators['ml_dec'] }}</strong>
+                    • нужно: prob ∈ [0.83, 0.9) и ML SKIP
+                </span>
+            @endif
+        </div>
+
+    @elseif($indicators && !isset($indicators['error']))
+        @php
+            $rsi       = $indicators['rsi'] ?? null;
+            $cum5      = $indicators['cum5'] ?? null;
+            $bb_pct_b  = $indicators['bb_pct_b'] ?? null;
+            $decision  = $indicators['decision'] ?? 'SKIP';
+
+            if ($decision === 'TAKE') {
+                $dec_color = '#3fb950';
+                $dec_label = '✅ TAKE';
+            } else {
+                $dec_color = '#ff6b6b';
+                $dec_label = '❌ SKIP';
+            }
+
+            if ($rsi !== null && $rsi < 20)      $rsi_color = '#ff6b6b';
+            elseif ($rsi !== null && $rsi < 30)  $rsi_color = '#f0883e';
+            elseif ($rsi !== null && $rsi < 70)  $rsi_color = '#3fb950';
+            else                                  $rsi_color = '#ff6b6b';
+
+            if ($cum5 !== null && $cum5 > -0.5)  $cum5_color = '#3fb950';
+            elseif ($cum5 !== null && $cum5 > -1.5) $cum5_color = '#f0883e';
+            else                                  $cum5_color = '#ff6b6b';
+        @endphp
+
+        <div class="neural-grid">
+            <div class="neural-item">
+                <div class="label">RSI(7)</div>
+                <div class="value" style="color: {{ $rsi_color }};">
+                    {{ $rsi !== null ? number_format($rsi, 1) : '—' }}
+                </div>
+            </div>
+            <div class="neural-item">
+                <div class="label">cum5, %</div>
+                <div class="value" style="color: {{ $cum5_color }};">
+                    {{ $cum5 !== null ? (($cum5 > 0 ? '+' : '') . number_format($cum5, 2)) : '—' }}
+                </div>
+            </div>
+            <div class="neural-item">
+                <div class="label">bb %B</div>
+                <div class="value" style="color: #f0f6fc;">
+                    {{ $bb_pct_b !== null ? number_format($bb_pct_b, 3) : '—' }}
+                </div>
+            </div>
+            <div class="neural-item">
+                <div class="label">Решение RSI</div>
+                <div class="value" style="color: {{ $dec_color }};">
+                    {{ $dec_label }}
+                </div>
+            </div>
+        </div>
+
+        @if(isset($indicators['signal_time']))
+            <div class="fg-time" style="margin-top: 6px;">
+                🕐 Свеча: {{ $indicators['signal_time'] }} UTC
+            </div>
+        @endif
+
+        @if(isset($indicators['thresholds']))
+            <div class="fg-detail" style="margin-top: 6px; font-size: 10px;">
+                <strong>Пороги:</strong>
+                RSI > {{ $indicators['thresholds']['rsi_min'] }} •
+                cum5: [{{ $indicators['thresholds']['cum5_min'] }}, {{ $indicators['thresholds']['cum5_max'] }}] •
+                bb%B: [{{ $indicators['thresholds']['bb_pct_b_min'] }}, {{ $indicators['thresholds']['bb_pct_b_max'] }}]
+            </div>
+        @endif
+
+    @else
+        <div style="color: #8b949e; font-size: 11px;">
+            ⏳ Нет данных (не удалось загрузить 15m свечи)
+        </div>
+    @endif
+</div>
     {{-- БЛОК 3: KF-СИГНАЛЫ --}}
     <div class="section">
         <div class="section-title">📊 KF-сигналы (вероятность падения)</div>

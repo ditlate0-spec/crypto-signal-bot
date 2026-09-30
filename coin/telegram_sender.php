@@ -236,7 +236,7 @@ $executor = new RustExecutorClient();
 $tradeSymbol = 'BTCUSDT';
 $margin      = 1000;
 $leverage    = 50;
-$sl_percent  = 0.5;
+$sl_percent  = 0.9;
 $trail_activate_percent = 0.22;
 $trail_callback_rate    = 0.1;
 

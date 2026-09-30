@@ -1,8 +1,9 @@
 <?php
 // ============================================
 // БЭКТЕСТ БЕЗ ML-ФИЛЬТРА.
-// Жёсткий TP (-0.21%) и SL (+0.5%).
+// Жёсткий TP (-0.22%) и SL (+0.9%).
 // Одна сделка за раз.
+// ЗАПИСЬ В БД: backtest_signals
 // ============================================
 
 ob_implicit_flush(true);
@@ -10,6 +11,19 @@ if (ob_get_level()) ob_end_flush();
 
 set_time_limit(0);
 ini_set('memory_limit', '4G');
+
+// ============================================
+// ПОДКЛЮЧЕНИЕ К БД
+// ============================================
+$db = mysqli_connect('db', 'root', 'root', 'volta');
+if (!$db) {
+    die("❌ MySQL connection failed: " . mysqli_connect_error() . "\n");
+}
+mysqli_set_charset($db, 'utf8mb4');
+
+// Очистка таблицы перед прогоном
+mysqli_query($db, "TRUNCATE TABLE `backtest_signals`");
+echo "🗑️  Таблица backtest_signals очищена\n";
 
 // ============================================
 // ПУТИ
@@ -25,19 +39,18 @@ $history_1d_file      = __DIR__ . '/history_1d.json';
 $BASE = [
     'THRESH_DAY_OTH'     => 20,
     'THRESH_DAY_OLD'     => 50,
-    'THRESH_HOUR_OTH'    => 20,
-    'THRESH_HOUR_OLD'    => 50,
-    'THRESH_BTC_15M_OTH' => 20,
-    'THRESH_BTC_15M_OLD' => 75,
+    'THRESH_HOUR_OTH'    => 30,
+    'THRESH_HOUR_OLD'    => 80,
+    'THRESH_BTC_15M_OTH' => 50,
+    'THRESH_BTC_15M_OLD' => 100,
     'THRESH_ETH_15M_OTH' => 0,
-    'THRESH_ETH_15M_OLD' => 90,
+    'THRESH_ETH_15M_OLD' => 100,
 ];
 
 // Параметры сделки
-$SL_PCT      = 0.9;
+$SL_PCT      = 0.7;
 $TP_PCT      = -0.23;
 $MAX_CANDLES = 170;
-
 // ============================================
 // ЗАГРУЗКА
 // ============================================
@@ -403,9 +416,6 @@ function findCandleAt($history, $ts_ms) {
     return $found;
 }
 
-/**
- * Симуляция шорта с жёстким TP и SL.
- */
 function simulateShort($h15, $start_idx, $entry_price, $SL_PCT, $TP_PCT, $MAX_CANDLES) {
     $sl_price = $entry_price * (1 + $SL_PCT / 100);
     $tp_price = $entry_price * (1 + $TP_PCT / 100);
@@ -418,16 +428,16 @@ function simulateShort($h15, $start_idx, $entry_price, $SL_PCT, $TP_PCT, $MAX_CA
         $high = (float)$h15[$i][2];
 
         if ($high >= $sl_price) {
-            return ['result'=>'SL','pnl_pct'=>-$SL_PCT,'candles'=>$i - $start_idx];
+            return ['result'=>'SL','pnl_pct'=>-$SL_PCT,'candles'=>$i - $start_idx, 'exit_price'=>$sl_price];
         }
         if ($low <= $tp_price) {
-            return ['result'=>'TP','pnl_pct'=>abs($TP_PCT),'candles'=>$i - $start_idx];
+            return ['result'=>'TP','pnl_pct'=>abs($TP_PCT),'candles'=>$i - $start_idx, 'exit_price'=>$tp_price];
         }
     }
 
     $close  = (float)$h15[$limit][4];
     $change = (($close - $entry_price) / $entry_price) * 100;
-    return ['result'=>'TIMEOUT','pnl_pct'=>$change,'candles'=>$limit - $start_idx];
+    return ['result'=>'TIMEOUT','pnl_pct'=>$change,'candles'=>$limit - $start_idx, 'exit_price'=>$close];
 }
 
 // ============================================
@@ -531,8 +541,9 @@ $THRESH_ETH_15M_OTH = $BASE['THRESH_ETH_15M_OTH'];
 $THRESH_ETH_15M_OLD = $BASE['THRESH_ETH_15M_OLD'];
 
 $total_signals = 0;
-$tp_count   = 0; $sl_count   = 0; $timeout_count = 0;
+$tp_count = 0; $sl_count = 0; $timeout_count = 0;
 $sum_pnl = 0.0;
+$saved_signals = 0;
 
 $next_available_idx = 2;
 
@@ -590,7 +601,41 @@ for ($i = 2; $i < $N - 2; $i++) {
         $sim['pnl_pct']
     );
 
-    // Следующая сделка возможна после закрытия этой
+    // ============================================
+    // ЗАПИСЬ В БД
+    // ============================================
+    $c1 = $h15_btc[$i - 2];
+    $c2 = $h15_btc[$i - 1];
+    $c3 = $h15_btc[$i];
+
+    $exit_price = (float)$sim['exit_price'];
+
+    $sql = sprintf(
+        "INSERT INTO `backtest_signals` (
+            `symbol`, `bot_type`, `timeframe`,
+            `candle_1_open`, `candle_1_high`, `candle_1_low`, `candle_1_close`, `candle_1_vol`,
+            `candle_2_open`, `candle_2_high`, `candle_2_low`, `candle_2_close`, `candle_2_vol`,
+            `candle_3_open`, `candle_3_high`, `candle_3_low`, `candle_3_close`, `candle_3_vol`,
+            `entry_price`, `result`, `exit_price`, `pnl_pct`, `candles_held`, `signal_time`
+        ) VALUES (
+            'BTCUSDT', 'mixed', '15m',
+            %.8f, %.8f, %.8f, %.8f, %.8f,
+            %.8f, %.8f, %.8f, %.8f, %.8f,
+            %.8f, %.8f, %.8f, %.8f, %.8f,
+            %.8f, '%s', %.8f, %.3f, %d, '%s'
+        )",
+        (float)$c1[1], (float)$c1[2], (float)$c1[3], (float)$c1[4], (float)$c1[5],
+        (float)$c2[1], (float)$c2[2], (float)$c2[3], (float)$c2[4], (float)$c2[5],
+        (float)$c3[1], (float)$c3[2], (float)$c3[3], (float)$c3[4], (float)$c3[5],
+        $entry_price, $sim['result'], $exit_price, $sim['pnl_pct'], $sim['candles'], $signal_time_str
+    );
+
+    if (mysqli_query($db, $sql)) {
+        $saved_signals++;
+    } else {
+        echo "⚠️ Ошибка записи: " . mysqli_error($db) . "\n";
+    }
+
     $next_available_idx = $entry_idx + $sim['candles'] + 1;
 }
 
@@ -616,5 +661,9 @@ if ($total_signals > 0) {
     echo "  Expectancy:       " . round($exp, 4) . "%\n";
     echo "  Суммарный PnL:    " . round($sum_pnl, 2) . "%\n";
 }
+echo "\n";
+echo "  📝 Записано в БД: {$saved_signals}\n";
+
+mysqli_close($db);
 
 echo "\n==========================================================================================\n";

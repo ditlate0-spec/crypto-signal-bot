@@ -30,7 +30,7 @@ pub enum Command {
         margin: f64,
         #[arg(long, default_value_t = 1)]
         leverage: u32,
-        #[arg(long, default_value_t = 0.5)]
+        #[arg(long, default_value_t = 0.9)]
         sl_percent: f64,
     },
 }

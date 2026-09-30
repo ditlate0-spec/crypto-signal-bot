@@ -28,35 +28,145 @@ class TradingBotService
 
     private const MARGIN        = 100;
     private const LEVERAGE      = 50;
-    private const SL_PERCENT    = 0.5;
+    private const SL_PERCENT    = 0.9;
 
     private const TRAIL_ACTIVATE_PERCENT = 0.2;
     private const TRAIL_CALLBACK_RATE    = 0.1;
     private const MODEL_THRESHOLD        = 0.85;
 
+    // RSI-фильтр работает только если ML prob в этом диапазоне
+    // (синхронизировано с backtest_ML.php и DashboardController)
+    private const RSI_PROB_MIN = 0.83;
+    private const RSI_PROB_MAX = 0.9;
+
     private const TRADE_SYMBOL = 'BTCUSDT';
 
+    private ?array $history15mCache = null;
+
     public function __construct(
-        private BinanceService   $binance,
-        private TelegramService  $telegram,
-        private ModelService     $model,
-        private FearGreedService $fearGreed,
-        private NewsService      $news,
+        private BinanceService    $binance,
+        private TelegramService   $telegram,
+        private ModelService      $model,
+        private FearGreedService  $fearGreed,
+        private NewsService       $news,
+        private IndicatorsService $indicators,
     ) {}
+
+    // ============================================
+    // ПРОВЕРКА СИГНАЛА (без открытия сделки)
+    // Возвращает массив:
+    //   verdict      => ['enter' => bool, 'text' => string]
+    //   kf           => сырые KF-данные
+    //   candles      => ['candles','entry_price','signal_time'] | null
+    //   modelResult  => результат ML | null
+    //   prob         => float | null
+    //   ml_accept    => bool
+    //   check_rsi    => bool
+    //   indicators   => данные RSI | null
+    //   rsi_accept   => bool
+    //   approved     => bool
+    //   source       => 'ml'|'rsi'|'skip'
+    //   reason       => строка-объяснение, если пропуск
+    // ============================================
+    public function checkSignal(?array $kfOverride = null): array
+    {
+        $kf = $kfOverride ?? $this->loadKfData();
+        $verdict = $this->buildVerdict($kf);
+
+        Log::info('[TradingBot] verdict: ' . strip_tags($verdict['text']));
+
+        $result = [
+            'verdict'     => $verdict,
+            'kf'          => $kf,
+            'candles'     => null,
+            'modelResult' => null,
+            'prob'        => null,
+            'ml_accept'   => false,
+            'check_rsi'   => false,
+            'indicators'  => null,
+            'rsi_accept'  => false,
+            'approved'    => false,
+            'source'      => 'skip',
+            'reason'      => null,
+        ];
+
+        // Нет сигнала от ботов → ML и RSI не нужны
+        if (!$verdict['enter']) {
+            $result['reason'] = 'no_bot_signal';
+            return $result;
+        }
+
+        // Скачиваем свечи для ML
+        $candles = $this->fetchCandles();
+        if (!$candles) {
+            $result['reason'] = 'no_candles';
+            return $result;
+        }
+        $result['candles'] = $candles;
+
+        // Спрашиваем ML
+        $modelResult = $this->askModel($candles, $kf);
+        if (!$modelResult) {
+            $result['reason'] = 'no_model';
+            return $result;
+        }
+        $result['modelResult'] = $modelResult;
+
+        $prob      = (float)$modelResult['probability_tp'];
+        $ml_accept = $prob >= self::MODEL_THRESHOLD;
+
+        $result['prob']      = $prob;
+        $result['ml_accept'] = $ml_accept;
+
+        // RSI — только в серой зоне [0.83, 0.9) и только если ML не приняла
+        $check_rsi = (!$ml_accept && $prob >= self::RSI_PROB_MIN && $prob < self::RSI_PROB_MAX);
+        $result['check_rsi'] = $check_rsi;
+
+        $rsi_accept = false;
+        if ($check_rsi) {
+            $h15 = $this->loadHistory15m();
+            $idx = $this->getCurrentIdx();
+
+            if (!empty($h15) && $idx >= 50) {
+                $rsi_data   = $this->indicators->check($h15, $idx);
+                $rsi_accept = ($rsi_data['decision'] ?? 'SKIP') === 'TAKE';
+
+                $result['indicators'] = $rsi_data;
+
+                Log::info('[TradingBot] RSI check', [
+                    'rsi'      => $rsi_data['rsi'] ?? null,
+                    'cum5'     => $rsi_data['cum5'] ?? null,
+                    'bb_pct_b' => $rsi_data['bb_pct_b'] ?? null,
+                    'decision' => $rsi_data['decision'] ?? 'SKIP',
+                ]);
+            } else {
+                Log::warning('[TradingBot] RSI skipped: no history or idx too small', [
+                    'h15_count' => count($h15),
+                    'idx'       => $idx,
+                ]);
+            }
+        }
+
+        $result['rsi_accept'] = $rsi_accept;
+        $result['approved']   = ($ml_accept || $rsi_accept);
+        $result['source']     = $ml_accept ? 'ml' : ($rsi_accept ? 'rsi' : 'skip');
+
+        if (!$result['approved']) {
+            $result['reason'] = 'rejected';
+        }
+
+        return $result;
+    }
 
     // ============================================
     // ГЛАВНЫЙ МЕТОД — вызывается каждые 15 минут
     // ============================================
     public function run(): array
     {
-        // 1. KF-данные
-        $kf = $this->loadKfData();
+        $check = $this->checkSignal();
+        $verdict = $check['verdict'];
 
-        // 2. Вердикт
-        $verdict = $this->buildVerdict($kf);
-        Log::info('[TradingBot] verdict: ' . strip_tags($verdict['text']));
-
-        // 2.1 Fear & Greed
+        // Fear & Greed
         $fearGreed = null;
         try {
             $fearGreed = $this->fearGreed->get();
@@ -64,7 +174,7 @@ class TradingBotService
             Log::warning('[TradingBot] fear_greed failed: ' . $e->getMessage());
         }
 
-        // 2.2 Новости
+        // Новости
         $cryptoNews = null;
         try {
             $cryptoNews = $this->news->getSentiment('BTC');
@@ -72,12 +182,16 @@ class TradingBotService
             Log::warning('[TradingBot] news failed: ' . $e->getMessage());
         }
 
-        // 3. Если вердикт не "ВХОД" — выходим
-        if (!$verdict['enter']) {
-            return ['verdict' => $verdict, 'traded' => false];
+        // Нет сигнала от ботов / нет свечей / нет модели — выходим
+        if (!$check['approved'] && $check['reason'] !== 'rejected') {
+            return [
+                'verdict' => $verdict,
+                'traded'  => false,
+                'reason'  => $check['reason'],
+            ];
         }
 
-        // 4. Проверяем хэш свечи (одна сделка на 15 минут)
+        // Проверяем хэш свечи (одна сделка на 15 минут)
         $candleTs   = floor(time() / 900) * 900;
         $candleTime = gmdate('Y-m-d H:i', $candleTs);
         $signalHash = md5('trade_' . $candleTime);
@@ -87,43 +201,46 @@ class TradingBotService
             return ['verdict' => $verdict, 'traded' => false, 'reason' => 'already_traded'];
         }
 
-        // 5. Скачиваем свечи с Binance
-        $candles = $this->fetchCandles();
-        if (!$candles) {
-            return ['verdict' => $verdict, 'traded' => false, 'reason' => 'no_candles'];
+        $prob    = $check['prob'] ?? null;
+        $source  = $check['source'];
+        $probPct = $prob !== null ? round($prob * 100, 1) : 0;
+
+        // Telegram — проверка модели
+        if ($check['candles']) {
+            $this->sendModelCheck(
+                $probPct,
+                $check['approved'],
+                $check['candles']['entry_price'],
+                $check['candles']['signal_time']
+            );
         }
 
-        // 6. Спрашиваем модель
-        $modelResult = $this->askModel($candles, $kf);
-        if (!$modelResult) {
-            $this->telegram->send("⚠️ Модель недоступна. Пропускаю сигнал.");
-            return ['verdict' => $verdict, 'traded' => false, 'reason' => 'no_model'];
-        }
-
-        $prob     = (float)$modelResult['probability_tp'];
-        $probPct  = round($prob * 100, 1);
-        $approved = $prob >= self::MODEL_THRESHOLD;
-
-        // 7. Telegram — проверка модели
-        $this->sendModelCheck($probPct, $approved, $candles['entry_price'], $candles['signal_time']);
-
-        if (!$approved) {
+        if (!$check['approved']) {
             TelegramSent::markSent($signalHash);
-            Log::info("[TradingBot] model SKIP: prob={$prob}");
-            return ['verdict' => $verdict, 'traded' => false, 'reason' => 'model_rejected', 'prob' => $prob];
+            Log::info("[TradingBot] SKIP: ml_prob={$prob}, source={$source}");
+            return [
+                'verdict' => $verdict,
+                'traded'  => false,
+                'reason'  => 'rejected',
+                'prob'    => $prob,
+                'source'  => $source,
+            ];
         }
 
-        // 8. Открываем сделку
-        $trade = $this->openTrade($candles, $prob);
+        // Открытие сделки
+        $trade = $this->openTrade($check['candles'], $prob);
 
         if (!$trade['success']) {
             $this->telegram->send("❌ Ошибка открытия сделки: " . ($trade['error'] ?? 'unknown'));
-            return ['verdict' => $verdict, 'traded' => false, 'reason' => 'trade_failed', 'error' => $trade['error'] ?? null];
+            return [
+                'verdict' => $verdict,
+                'traded'  => false,
+                'reason'  => 'trade_failed',
+                'error'   => $trade['error'] ?? null,
+            ];
         }
 
-        // ============================================
-        // 9. ЗАПИСЬ В AI-ЖУРНАЛ
-        // ============================================
+        // AI-журнал
         try {
             $tradeModel = Trade::where('symbol', self::TRADE_SYMBOL)
                 ->where('status', 'open')
@@ -141,45 +258,40 @@ class TradingBotService
                 'sl_price'    => (float)$trade['sl'],
                 'tp_price'    => (float)$trade['tp'],
 
-                // KF — бот №1 (OTH)
-                'kf_btc_1d'   => $kf['kf']['BTCUSDT']['1d']  ?? null,
-                'kf_btc_1h'   => $kf['kf']['BTCUSDT']['1h']  ?? null,
-                'kf_btc_15m'  => $kf['kf']['BTCUSDT']['15m'] ?? null,
-                'kf_eth_1d'   => $kf['kf']['ETHUSDT']['1d']  ?? null,
-                'kf_eth_1h'   => $kf['kf']['ETHUSDT']['1h']  ?? null,
-                'kf_eth_15m'  => $kf['kf']['ETHUSDT']['15m'] ?? null,
+                'kf_btc_1d'   => $check['kf']['kf']['BTCUSDT']['1d']  ?? null,
+                'kf_btc_1h'   => $check['kf']['kf']['BTCUSDT']['1h']  ?? null,
+                'kf_btc_15m'  => $check['kf']['kf']['BTCUSDT']['15m'] ?? null,
+                'kf_eth_1d'   => $check['kf']['kf']['ETHUSDT']['1d']  ?? null,
+                'kf_eth_1h'   => $check['kf']['kf']['ETHUSDT']['1h']  ?? null,
+                'kf_eth_15m'  => $check['kf']['kf']['ETHUSDT']['15m'] ?? null,
 
-                // KF — бот №2 (OLD)
-                'old_btc_1d'  => $kf['old']['BTCUSDT']['1d']  ?? null,
-                'old_btc_1h'  => $kf['old']['BTCUSDT']['1h']  ?? null,
-                'old_btc_15m' => $kf['old']['BTCUSDT']['15m'] ?? null,
-                'old_eth_1d'  => $kf['old']['ETHUSDT']['1d']  ?? null,
-                'old_eth_1h'  => $kf['old']['ETHUSDT']['1h']  ?? null,
-                'old_eth_15m' => $kf['old']['ETHUSDT']['15m'] ?? null,
+                'old_btc_1d'  => $check['kf']['old']['BTCUSDT']['1d']  ?? null,
+                'old_btc_1h'  => $check['kf']['old']['BTCUSDT']['1h']  ?? null,
+                'old_btc_15m' => $check['kf']['old']['BTCUSDT']['15m'] ?? null,
+                'old_eth_1d'  => $check['kf']['old']['ETHUSDT']['1d']  ?? null,
+                'old_eth_1h'  => $check['kf']['old']['ETHUSDT']['1h']  ?? null,
+                'old_eth_15m' => $check['kf']['old']['ETHUSDT']['15m'] ?? null,
 
-                // ML
                 'ml_probability' => $prob,
                 'ml_threshold'   => self::MODEL_THRESHOLD,
-                'ml_features'    => $modelResult['features'] ?? null,
+                'ml_features'    => $check['modelResult']['features'] ?? null,
 
-                // Fear & Greed
                 'fear_greed_index' => $fearGreed['value']                ?? null,
                 'fear_greed_label' => $fearGreed['value_classification'] ?? null,
 
-                // Новости
                 'news_positive'  => $cryptoNews['positive_count'] ?? 0,
                 'news_negative'  => $cryptoNews['negative_count'] ?? 0,
                 'news_neutral'   => $cryptoNews['neutral_count']  ?? 0,
                 'news_headlines' => $cryptoNews['headlines']      ?? null,
                 'news_sentiment' => $cryptoNews['sentiment']      ?? null,
 
-                // Вердикт
                 'verdict_text' => strip_tags($verdict['text']),
             ]);
 
             Log::info('[TradingBot] ai_trade_journal created', [
                 'trade_id' => $tradeModel?->id,
                 'prob'     => $prob,
+                'source'   => $source,
             ]);
         } catch (\Throwable $e) {
             Log::error('[TradingBot] failed to write ai_trade_journal: ' . $e->getMessage());
@@ -187,7 +299,13 @@ class TradingBotService
 
         TelegramSent::markSent($signalHash);
 
-        return ['verdict' => $verdict, 'traded' => true, 'prob' => $prob, 'trade' => $trade];
+        return [
+            'verdict' => $verdict,
+            'traded'  => true,
+            'prob'    => $prob,
+            'source'  => $source,
+            'trade'   => $trade,
+        ];
     }
 
     // ============================================
@@ -198,10 +316,7 @@ class TradingBotService
         $symbols = ['BTCUSDT', 'ETHUSDT'];
         $tfs     = ['1d', '1h', '15m'];
 
-        $result = [
-            'kf'  => [],
-            'old' => [],
-        ];
+        $result = ['kf' => [], 'old' => []];
 
         foreach ($symbols as $sym) {
             foreach ($tfs as $tf) {
@@ -213,10 +328,6 @@ class TradingBotService
         return $result;
     }
 
-    // ============================================
-    // KF — последний сигнал бота №1 (OTH)
-    // С проверкой свежести: 1d = 2 суток, 1h = 3 часа, 15m = 45 минут
-    // ============================================
     private function getLastKf(string $symbol, string $tf): float
     {
         $model = match ($tf) {
@@ -239,10 +350,6 @@ class TradingBotService
         return $row ? (float)$row->kf : 0.0;
     }
 
-    // ============================================
-    // KF — последний сигнал бота №2 (OLD)
-    // С проверкой свежести: 1d = 2 суток, 1h = 3 часа, 15m = 45 минут
-    // ============================================
     private function getLastOldBotKf(string $symbol, string $tf): float
     {
         $model = match ($tf) {
@@ -265,9 +372,6 @@ class TradingBotService
         return $row ? (float)$row->kf : 0.0;
     }
 
-    // ============================================
-    // ВЕРДИКТ
-    // ============================================
     private function buildVerdict(array $data): array
     {
         $kf  = $data['kf'];
@@ -307,9 +411,6 @@ class TradingBotService
         return ['enter' => $enter, 'text' => $text];
     }
 
-    // ============================================
-    // СКАЧИВАЕМ 3 СВЕЧИ С BINANCE
-    // ============================================
     private function fetchCandles(): ?array
     {
         $res = $this->binance->getCandles('BTCUSDT', '15m', 4);
@@ -329,9 +430,30 @@ class TradingBotService
         ];
     }
 
-    // ============================================
-    // СПРАШИВАЕМ МОДЕЛЬ
-    // ============================================
+    private function loadHistory15m(): array
+    {
+        if ($this->history15mCache !== null) {
+            return $this->history15mCache;
+        }
+
+        $res = $this->binance->getCandles('BTCUSDT', '15m', 200);
+        if (!$res['success'] || empty($res['data'])) {
+            Log::warning('[TradingBot] history_15m not available');
+            $this->history15mCache = [];
+            return [];
+        }
+
+        $this->history15mCache = $res['data'];
+        return $this->history15mCache;
+    }
+
+    private function getCurrentIdx(): int
+    {
+        $h15 = $this->loadHistory15m();
+        if (empty($h15)) return -1;
+        return count($h15) - 2;
+    }
+
     private function askModel(array $candles, array $kfData): ?array
     {
         $kfForModel = [
@@ -368,14 +490,10 @@ class TradingBotService
         );
     }
 
-    // ============================================
-    // ОТКРЫТИЕ СДЕЛКИ
-    // ============================================
     private function openTrade(array $candles, float $prob): array
     {
         $symbol = self::TRADE_SYMBOL;
 
-        // 0. Проверка позиции
         $posCheck = $this->binance->getPosition($symbol);
         if (!$posCheck['success']) {
             return ['success' => false, 'error' => 'position check failed: ' . $posCheck['error']];
@@ -385,7 +503,6 @@ class TradingBotService
             return ['success' => false, 'error' => 'Позиция уже открыта. Новая не нужна.'];
         }
 
-        // Текущая цена
         $priceRes = $this->binance->getPrice($symbol);
         if (!$priceRes['success']) {
             return ['success' => false, 'error' => 'price: ' . $priceRes['error']];
@@ -395,7 +512,6 @@ class TradingBotService
         $notional     = self::MARGIN * self::LEVERAGE;
         $quantity     = $notional / $currentPrice;
 
-        // Инфо о символе
         $info = $this->binance->getExchangeInfo($symbol);
         if (!$info['success']) {
             return ['success' => false, 'error' => 'exchangeInfo: ' . $info['error']];
@@ -412,18 +528,15 @@ class TradingBotService
             return ['success' => false, 'error' => 'Позиция меньше минимального номинала'];
         }
 
-        // Плечо и маржа
         $this->binance->setLeverage($symbol, self::LEVERAGE);
         $this->binance->setMarginType($symbol, 'ISOLATED');
 
-        // SHORT
         $order = $this->binance->openShort($symbol, $quantity);
         if (!$order['success']) {
             return ['success' => false, 'error' => 'openShort: ' . $order['error']];
         }
         $entryPrice = (float)$order['data']['avgPrice'];
 
-        // SL и активация трейлинга
         $decimals = (int)abs(log10($tickSize));
         $slPrice  = round($entryPrice * (1 + self::SL_PERCENT / 100) / $tickSize) * $tickSize;
         $slPrice  = number_format($slPrice, $decimals, '.', '');
@@ -431,7 +544,6 @@ class TradingBotService
         $trailActivatePrice = round($entryPrice * (1 - self::TRAIL_ACTIVATE_PERCENT / 100) / $tickSize) * $tickSize;
         $trailActivatePrice = number_format($trailActivatePrice, $decimals, '.', '');
 
-        // Сбрасываем старые условные заявки
         $this->binance->cancelAllAlgoOrders($symbol);
 
         $slResult = $this->binance->setStopLoss($symbol, $slPrice);
@@ -449,7 +561,6 @@ class TradingBotService
             $this->telegram->send("⚠️ Шорт открыт, но Trailing не выставлен: " . $tpResult['error']);
         }
 
-        // Записываем в trades
         Trade::create([
             'symbol'      => $symbol,
             'side'        => 'SHORT',
@@ -462,7 +573,6 @@ class TradingBotService
             'opened_at'   => now('UTC'),
         ]);
 
-        // Telegram
         $probPct = round($prob * 100, 1);
         $this->telegram->send(
             "✅ <b>ШОРТ ОТКРЫТ</b>\n" .

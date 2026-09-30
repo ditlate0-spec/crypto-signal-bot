@@ -22,8 +22,8 @@ FEATURES_PATH = os.path.join(BASE_DIR, "tp_filter_features.pkl")
 META_PATH     = os.path.join(BASE_DIR, "tp_filter_meta.pkl")
 
 # Дефолтный порог — используется, если meta.pkl недоступен
-DEFAULT_THRESHOLD = 0.84
-MAYBE_MARGIN = 0.05
+DEFAULT_THRESHOLD = 0.9
+MAYBE_MARGIN = 0.01
 
 # ============================================
 # ЗАГРУЗКА МОДЕЛИ, ПРИЗНАКОВ И ПОРОГА
@@ -38,21 +38,16 @@ if not os.path.exists(FEATURES_PATH):
 
 _model = joblib.load(MODEL_PATH)
 _feature_names = joblib.load(FEATURES_PATH)
-
-# Порог читаем из meta.pkl — чтобы синхронизироваться с train_final.py
-if os.path.exists(META_PATH):
-    try:
-        _meta = joblib.load(META_PATH)
-        THRESHOLD = float(_meta.get('threshold', DEFAULT_THRESHOLD))
-        print(f"INFO: threshold loaded from meta: {THRESHOLD}", file=sys.stderr)
-    except Exception as e:
-        print(f"WARN: cannot load meta ({e}), using default {DEFAULT_THRESHOLD}", file=sys.stderr)
-        THRESHOLD = DEFAULT_THRESHOLD
+SCALER_PATH = os.path.join(BASE_DIR, "tp_filter_scaler.pkl")
+if os.path.exists(SCALER_PATH):
+    _scaler = joblib.load(SCALER_PATH)
+    print(f"INFO: scaler loaded", file=sys.stderr)
 else:
-    print(f"WARN: meta not found, using default threshold {DEFAULT_THRESHOLD}", file=sys.stderr)
-    THRESHOLD = DEFAULT_THRESHOLD
-
-
+    _scaler = None
+    print(f"WARN: scaler not found, using raw features", file=sys.stderr)
+# Порог читаем из meta.pkl — чтобы синхронизироваться с train_final.py
+THRESHOLD = DEFAULT_THRESHOLD
+print(f"INFO: using hardcoded threshold {THRESHOLD}", file=sys.stderr)
 # ============================================
 # ПОСТРОЕНИЕ ПРИЗНАКОВ
 # ============================================
@@ -148,24 +143,56 @@ def predict(data):
     for col in _feature_names:
         if col not in X.columns:
             X[col] = np.nan
-
     X = X[_feature_names].fillna(0)
 
-    proba = float(_model.predict_proba(X)[0, 1])
-
-    if proba >= THRESHOLD:
-        decision = "TAKE"
-    elif proba >= THRESHOLD - MAYBE_MARGIN:
-        decision = "MAYBE"
+    # Масштабирование
+    if _scaler is not None:
+        X_arr = _scaler.transform(X)
     else:
-        decision = "SKIP"
+        X_arr = X.values
 
+    # Основная модель (IsolationForest)
+    raw_score = float(_model.decision_function(X_arr)[0])
+    proba_a = 1.0 / (1.0 + np.exp(-raw_score * 10.0))
+    proba_a = round(float(proba_a), 4)
+
+    if proba_a >= THRESHOLD:
+        return {
+            "probability_tp": proba_a,
+            "threshold": THRESHOLD,
+            "decision": "TAKE",
+            "source": "ml",
+        }
+
+    # ---- RSI-ФИЛЬТР ----
+    meta = data.get('meta_features', {}) or {}
+    thresholds = data.get('rsi_filter_thresholds', {}) or {}
+
+    if meta:
+        rsi_v   = float(meta.get('rsi', 0))
+        cum5_v  = float(meta.get('cum5', 0))
+        bulls_v = float(meta.get('bulls10', 0))
+
+        rsi_min     = float(thresholds.get('rsi_min', 20))
+        cum5_min    = float(thresholds.get('cum5_min', -1.50))
+        bulls10_min = float(thresholds.get('bulls10_min', 2.0))
+
+        if rsi_v > rsi_min and cum5_v > cum5_min and bulls_v > bulls10_min:
+            return {
+                "probability_tp": 0.85,
+                "threshold": THRESHOLD,
+                "decision": "TAKE",
+                "source": "rsi_filter",
+                "meta": {"rsi": rsi_v, "cum5": cum5_v, "bulls10": bulls_v},
+            }
+
+    # SKIP
     return {
-        "probability_tp": round(proba, 4),
+        "probability_tp": proba_a,
         "threshold": THRESHOLD,
-        "decision": decision,
+        "decision": "SKIP",
+        "source": "ml",
     }
-
 
 # ============================================
 # MAIN
