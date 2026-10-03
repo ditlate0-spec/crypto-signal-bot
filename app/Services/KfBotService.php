@@ -175,14 +175,10 @@ class KfBotService
         $lov2   = (($mincena2 - $cena2) / $cena2) * 100;
         $lov3   = (($mincena3 - $cena3) / $cena3) * 100;
 
-        $lov2_high = -3; $lov2_low = -4;
-        $prOb1_high = 12; $kf_mid = 45; $kf_add_high = 65;
-        $prIzm1_high = 0.001; $prIzm1_low = 0.1;
-        $kf_high = 8; $kf_low = 20; $kf_base = 18;
-        $lov3_high = -20; $lov3_low = -4;
-        $prOb2_high = 10; $prOb2_mid = 18;
-        $kf_add_low = 40; $kf_add_base = 8;
-        $prOb2_trigger = 15; $prIzm2_crash = -6; $lov_crash = -1.5;
+    $lov2_high=-3; $lov2_low=-4; $prOb1_high=12; $kf_mid=45; $kf_add_high=65;
+    $prIzm1_high=0.001; $prIzm1_low=0.1; $kf_high=8; $kf_low=20; $kf_base=18;
+    $lov3_high=-20; $lov3_low=-4; $prOb2_high=10; $prOb2_mid=18;
+    $kf_add_low=40; $kf_add_base=8; $prOb2_trigger=15; $prIzm2_crash=-6; $lov_crash=-1.5;
 
         $KF = 0;
 
@@ -253,14 +249,10 @@ class KfBotService
         $lov2   = (($mincena2 - $cena2) / $cena2) * 100;
         $lov3   = (($mincena3 - $cena3) / $cena3) * 100;
 
-        $lov2_high = -3; $lov2_low = 0;
-        $prOb1_high = 150; $kf_mid = 50; $kf_add_high = 40;
-        $prIzm1_high = 3; $prIzm1_low = 5;
-        $kf_high = 10; $kf_low = 20; $kf_base = 35;
-        $lov3_high = -1.5; $lov3_low = -1;
-        $prOb2_high = 35; $prOb2_mid = 20;
-        $kf_add_low = 35; $kf_add_base = 45;
-        $prOb2_trigger = 20; $prIzm2_crash = -2; $lov_crash = -1;
+    $lov2_high=-3; $lov2_low=0; $prOb1_high=150; $kf_mid=50; $kf_add_high=40;
+    $prIzm1_high=3; $prIzm1_low=5; $kf_high=10; $kf_low=20; $kf_base=35;
+    $lov3_high=-1.5; $lov3_low=-1; $prOb2_high=35; $prOb2_mid=20;
+    $kf_add_low=35; $kf_add_base=45; $prOb2_trigger=20; $prIzm2_crash=-2; $lov_crash=-1;
 
         $KF = 0;
 
@@ -336,13 +328,11 @@ class KfBotService
         $lov2   = (($mincena2 - $cena2) / $cena2) * 100;
         $lov3   = (($mincena3 - $cena3) / $cena3) * 100;
 
-        $lov2_high = -2.5; $lov2_low = -0.4;
-        $prOb1_high = 70; $prIzm1_low = -0.9; $lov_crash = -0.3;
-        $lov3_high = -1.2; $lov3_low = -0.6; $prOb2_high = 40;
-        $prIzm2_crash = -0.5; $prIzm1_high = -0.3; $prOb2_trigger = 45;
-        $kf_high = 10; $kf_mid = 70; $kf_low = 30; $kf_base = 8;
-        $kf_add_high = 20; $kf_add_low = 35; $kf_add_base = 40;
-        $kf_add_mid = 45; $kf_add_high2 = 45;
+    $lov2_high=-2.5; $lov2_low=-0.4; $prOb1_high=70; $prIzm1_low=-0.9; $lov_crash=-0.3;
+    $lov3_high=-1.2; $lov3_low=-0.6; $prOb2_high=40; $prIzm2_crash=-0.5; $prIzm1_high=-0.3; $prOb2_trigger=45;
+    $kf_high=10; $kf_mid=70; $kf_low=30; $kf_base=8;
+    $kf_add_high=20; $kf_add_low=35; $kf_add_base=40; $kf_add_mid=45; $kf_add_high2=45;
+
 
         $KF = 0;
 
