@@ -56,8 +56,8 @@ class DashboardController extends Controller
         //      ML и RSI внутри — только если боты дали сигнал
         // ============================================
 $signal = null;
+$tradeResult = null;
 try {
-    // Преобразуем live-данные к виду, который ожидает buildVerdict (числа, а не массивы)
     $kfForCheck = ['kf' => [], 'old' => []];
     foreach (['BTCUSDT', 'ETHUSDT'] as $sym) {
         foreach (['1d', '1h', '15m'] as $tf) {
@@ -66,9 +66,16 @@ try {
         }
     }
 
+    // 1) Проверка (для отображения на дашборде)
     $signal = $this->tradingBot->checkSignal($kfForCheck);
+
+    // 2) Открытие сделки — если сигнал одобрен
+    if ($signal['approved'] ?? false) {
+        $tradeResult = $this->tradingBot->run();
+        \Log::info('[Dashboard] run result', $tradeResult);
+    }
 } catch (\Throwable $e) {
-    \Log::error('[Dashboard] checkSignal failed: ' . $e->getMessage());
+    \Log::error('[Dashboard] checkSignal/run failed: ' . $e->getMessage());
 }
         $log('checkSignal');
 

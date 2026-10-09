@@ -120,16 +120,26 @@ if ($exitReason === 'UNKNOWN' && $entryPrice > 0 && $exitPrice > 0) {
     $msg .= "Цена выхода: \${$exitPrice}\n";
     $msg .= "{$pnlSign} PnL: \${$pnlFormatted}";
 
-    $ch = curl_init("https://api.telegram.org/bot$TOKEN/sendMessage");
-    curl_setopt($ch, CURLOPT_POST, true);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query([
-        'chat_id'    => $CHAT_ID,
-        'text'       => $msg,
-        'parse_mode' => 'HTML',
-    ]));
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_exec($ch);
-    curl_close($ch);
+$ch = curl_init("https://api.telegram.org/bot$TOKEN/sendMessage");
+curl_setopt($ch, CURLOPT_POST, true);
+curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query([
+    'chat_id'    => $CHAT_ID,
+    'text'       => $msg,
+    'parse_mode' => 'HTML',
+]));
+curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+
+$response = curl_exec($ch);
+$httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+$curlError = curl_error($ch);
+curl_close($ch);
+
+\Log::info('[notify] telegram result', [
+    'http_code'  => $httpCode,
+    'curl_error' => $curlError,
+    'response'   => $response,
+]);
 
     return response()->json([
         'status'      => 'ok',

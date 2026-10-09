@@ -99,10 +99,19 @@ async fn handle_order_update(event: &Value, config: &UserStreamConfig) {
 
     if symbol != config.symbol { return; }
 
+    // ⬇️ НОВОЕ: парсим realized_pnl
+    let pnl_value: f64 = realized_pnl.parse().unwrap_or(0.0);
+
+    // ⬇️ НОВОЕ: дебаг-лог (можно потом убрать)
+    tracing::info!(pnl_raw = realized_pnl, pnl_parsed = pnl_value, "PNL DEBUG");
+
     let is_closing = order_type == "STOP_MARKET"
         || order_type == "TRAILING_STOP_MARKET"
         || order_type == "TAKE_PROFIT_MARKET"
-        || (order_type == "MARKET" && reduce_only);
+        || (order_type == "MARKET" && reduce_only)
+        || (order_type == "MARKET" && pnl_value != 0.0); // ⬅️ ЭТО НОВОЕ
+
+    tracing::info!(is_closing, order_status, side, "CLOSING CHECK");
 
     if is_closing && order_status == "FILLED" && side == "BUY" {
         tracing::info!(symbol, order_type, avg_price, realized_pnl, "position closed");

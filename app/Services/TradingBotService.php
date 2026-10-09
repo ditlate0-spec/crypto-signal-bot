@@ -18,24 +18,43 @@ class TradingBotService
     // ============================================
     // НАСТРОЙКИ
     // ============================================
-    private const THRESH_DAY_OTH     = 20;
-    private const THRESH_DAY_OLD     = 50;
-    private const THRESH_HOUR_OTH    = 10;
-    private const THRESH_HOUR_OLD    = 40;
+    private const THRESH_DAY_OTH        = 20;
+    private const THRESH_DAY_OLD        = 45;
+    private const THRESH_DAY_OLD_STRONG = 85;
+
+    private const THRESH_HOUR_OTH        = 10;
+    private const THRESH_HOUR_OLD        = 55;
+    private const THRESH_HOUR_OLD_STRONG = 65;
+
     private const THRESH_BTC_15M_OTH = 30;
     private const THRESH_BTC_15M_OLD = 55;
+    private const THRESH_ETH_15M_OTH = 30;
     private const THRESH_ETH_15M_OLD = 70;
 
-    private const MARGIN        = 100;
-    private const LEVERAGE      = 50;
-    private const SL_PERCENT    = 0.9;
+    private const MARGIN     = 100;
+    private const SL_PERCENT = 0.9;
 
-    private const TRAIL_ACTIVATE_PERCENT = 0.2;
-    private const TRAIL_CALLBACK_RATE    = 0.1;
-    private const MODEL_THRESHOLD        = 0.85;
+    private const LEVERAGE_BY_MODE = [
+        '15m' => 50,
+        '1h'  => 45,
+        '1d'  => 45,
+    ];
 
-    // RSI-фильтр работает только если ML prob в этом диапазоне
-    // (синхронизировано с backtest_ML.php и DashboardController)
+    private const TRAIL_PARAMS = [
+        '15m' => ['activate' => 0.2, 'callback' => 0.1],
+        '1h'  => ['activate' => 0.3, 'callback' => 0.2],
+        '1d'  => ['activate' => 0.8, 'callback' => 0.5],
+    ];
+
+    // Анти-перекрытие: минимум секунд между закрытием последней сделки того же режима и новой
+    private const MODE_COOLDOWN_SEC = [
+        '15m' => 75 * 60,
+        '1h'  => 3 * 60 * 60,
+        '1d'  => 48 * 60 * 60,
+    ];
+
+    private const MODEL_THRESHOLD = 0.85;
+
     private const RSI_PROB_MIN = 0.83;
     private const RSI_PROB_MAX = 0.9;
 
@@ -54,19 +73,6 @@ class TradingBotService
 
     // ============================================
     // ПРОВЕРКА СИГНАЛА (без открытия сделки)
-    // Возвращает массив:
-    //   verdict      => ['enter' => bool, 'text' => string]
-    //   kf           => сырые KF-данные
-    //   candles      => ['candles','entry_price','signal_time'] | null
-    //   modelResult  => результат ML | null
-    //   prob         => float | null
-    //   ml_accept    => bool
-    //   check_rsi    => bool
-    //   indicators   => данные RSI | null
-    //   rsi_accept   => bool
-    //   approved     => bool
-    //   source       => 'ml'|'rsi'|'skip'
-    //   reason       => строка-объяснение, если пропуск
     // ============================================
     public function checkSignal(?array $kfOverride = null): array
     {
@@ -90,13 +96,11 @@ class TradingBotService
             'reason'      => null,
         ];
 
-        // Нет сигнала от ботов → ML и RSI не нужны
         if (!$verdict['enter']) {
             $result['reason'] = 'no_bot_signal';
             return $result;
         }
 
-        // Скачиваем свечи для ML
         $candles = $this->fetchCandles();
         if (!$candles) {
             $result['reason'] = 'no_candles';
@@ -104,7 +108,6 @@ class TradingBotService
         }
         $result['candles'] = $candles;
 
-        // Спрашиваем ML
         $modelResult = $this->askModel($candles, $kf);
         if (!$modelResult) {
             $result['reason'] = 'no_model';
@@ -118,7 +121,6 @@ class TradingBotService
         $result['prob']      = $prob;
         $result['ml_accept'] = $ml_accept;
 
-        // RSI — только в серой зоне [0.83, 0.9) и только если ML не приняла
         $check_rsi = (!$ml_accept && $prob >= self::RSI_PROB_MIN && $prob < self::RSI_PROB_MAX);
         $result['check_rsi'] = $check_rsi;
 
@@ -159,14 +161,13 @@ class TradingBotService
     }
 
     // ============================================
-    // ГЛАВНЫЙ МЕТОД — вызывается каждые 15 минут
+    // ГЛАВНЫЙ МЕТОД
     // ============================================
     public function run(): array
     {
         $check = $this->checkSignal();
         $verdict = $check['verdict'];
 
-        // Fear & Greed
         $fearGreed = null;
         try {
             $fearGreed = $this->fearGreed->get();
@@ -174,7 +175,6 @@ class TradingBotService
             Log::warning('[TradingBot] fear_greed failed: ' . $e->getMessage());
         }
 
-        // Новости
         $cryptoNews = null;
         try {
             $cryptoNews = $this->news->getSentiment('BTC');
@@ -182,7 +182,6 @@ class TradingBotService
             Log::warning('[TradingBot] news failed: ' . $e->getMessage());
         }
 
-        // Нет сигнала от ботов / нет свечей / нет модели — выходим
         if (!$check['approved'] && $check['reason'] !== 'rejected') {
             return [
                 'verdict' => $verdict,
@@ -191,7 +190,6 @@ class TradingBotService
             ];
         }
 
-        // Проверяем хэш свечи (одна сделка на 15 минут)
         $candleTs   = floor(time() / 900) * 900;
         $candleTime = gmdate('Y-m-d H:i', $candleTs);
         $signalHash = md5('trade_' . $candleTime);
@@ -205,7 +203,6 @@ class TradingBotService
         $source  = $check['source'];
         $probPct = $prob !== null ? round($prob * 100, 1) : 0;
 
-        // Telegram — проверка модели
         if ($check['candles']) {
             $this->sendModelCheck(
                 $probPct,
@@ -227,9 +224,8 @@ class TradingBotService
             ];
         }
 
-        // Открытие сделки
-        $trade = $this->openTrade($check['candles'], $prob);
-
+        $mode  = $check['verdict']['mode'] ?? '15m';
+        $trade = $this->openTrade($check['candles'], $prob, $mode);
         if (!$trade['success']) {
             $this->telegram->send("❌ Ошибка открытия сделки: " . ($trade['error'] ?? 'unknown'));
             return [
@@ -240,7 +236,6 @@ class TradingBotService
             ];
         }
 
-        // AI-журнал
         try {
             $tradeModel = Trade::where('symbol', self::TRADE_SYMBOL)
                 ->where('status', 'open')
@@ -254,7 +249,7 @@ class TradingBotService
                 'entry_price' => $trade['entry_price'],
                 'entry_time'  => now('UTC'),
                 'quantity'    => $trade['quantity'],
-                'leverage'    => self::LEVERAGE,
+                'leverage'    => $trade['leverage'] ?? 50,
                 'sl_price'    => (float)$trade['sl'],
                 'tp_price'    => (float)$trade['tp'],
 
@@ -372,6 +367,9 @@ class TradingBotService
         return $row ? (float)$row->kf : 0.0;
     }
 
+    // ============================================
+    // ЛОГИКА ВХОДА — КАСКАД (как в backtest_ML.php)
+    // ============================================
     private function buildVerdict(array $data): array
     {
         $kf  = $data['kf'];
@@ -381,34 +379,67 @@ class TradingBotService
         $btcHourStrong = ($kf['BTCUSDT']['1h'] > self::THRESH_HOUR_OTH && $old['BTCUSDT']['1h'] > self::THRESH_HOUR_OLD);
 
         $btc15Ready = ($kf['BTCUSDT']['15m'] > self::THRESH_BTC_15M_OTH && $old['BTCUSDT']['15m'] > self::THRESH_BTC_15M_OLD);
-        $eth15Ready = ($kf['ETHUSDT']['15m'] > self::THRESH_BTC_15M_OTH && $old['ETHUSDT']['15m'] > self::THRESH_ETH_15M_OLD);
+        $eth15Ready = ($kf['ETHUSDT']['15m'] > self::THRESH_ETH_15M_OTH && $old['ETHUSDT']['15m'] > self::THRESH_ETH_15M_OLD);
         $trigger15mReady = ($btc15Ready && $eth15Ready);
+
+        $oldDayKf  = (float)($old['BTCUSDT']['1d'] ?? 0);
+        $oldHourKf = (float)($old['BTCUSDT']['1h'] ?? 0);
 
         $enter = false;
         $text  = '';
+        $mode  = 'skip';
 
         if ($btcDayStrong) {
-            if ($btcHourStrong) {
-                $text = "🚀 <b>ВХОД РАЗРЕШЕН: ТОРГУЕМ НА 1H!</b>\n(1D одобрен + 1H одобрен)";
+            if ($oldDayKf > self::THRESH_DAY_OLD_STRONG) {
+                // День очень сильный → 1d
+                $text = "🚀 <b>ВХОД РАЗРЕШЕН: ТОРГУЕМ ПО ДНЮ!</b>\n(oldBot 1D = {$oldDayKf} > " . self::THRESH_DAY_OLD_STRONG . ")";
                 $enter = true;
-            } elseif ($trigger15mReady) {
-                $text = "⚡️ <b>ВХОД РАЗРЕШЕН: ТОРГУЕМ НА 15M!</b>\n(1D одобрен + Боты BTC/ETH дали синхронный импульс)";
-                $enter = true;
+                $mode  = '1d';
+
+            } elseif ($oldDayKf >= self::THRESH_DAY_OLD) {
+                // День средний [45, 85] → смотрим час
+                if ($btcHourStrong) {
+                    if ($oldHourKf > self::THRESH_HOUR_OLD_STRONG) {
+                        // Час очень сильный → 1h
+                        $text = "🚀 <b>ВХОД РАЗРЕШЕН: ТОРГУЕМ НА 1H!</b>\n(oldBot 1D = {$oldDayKf}, oldBot 1H = {$oldHourKf} > " . self::THRESH_HOUR_OLD_STRONG . ")";
+                        $enter = true;
+                        $mode  = '1h';
+                    } else {
+                        // Час средний [55, 65] → 15m
+                        if ($trigger15mReady) {
+                            $text = "⚡️ <b>ВХОД РАЗРЕШЕН: ТОРГУЕМ НА 15M!</b>\n(oldBot 1D = {$oldDayKf}, час средний, 15m готовы)";
+                            $enter = true;
+                            $mode  = '15m';
+                        } else {
+                            $text = "⏸ <b>ЗАБОР</b>\n(oldBot 1D = {$oldDayKf}, час средний, 15m не готовы)";
+                        }
+                    }
+                } else {
+                    // Час слабый → 15m
+                    if ($trigger15mReady) {
+                        $text = "⚡️ <b>ВХОД РАЗРЕШЕН: ТОРГУЕМ НА 15M!</b>\n(oldBot 1D = {$oldDayKf}, час слабый, 15m готовы)";
+                        $enter = true;
+                        $mode  = '15m';
+                    } else {
+                        $text = "⏸ <b>ЗАБОР</b>\n(oldBot 1D = {$oldDayKf}, час слабый, 15m не готовы)";
+                    }
+                }
             } else {
-                $text = "⏸ <b>ЗАБОР (ЖДЕМ СИНХРОНИЗАЦИИ)</b>\n(День сильный, но час слабый и нет парного сигнала)";
+                // День слабый (<45) → нет сигнала
+                $text = "❌ НЕ ТОРГУЕМ\n(oldBot 1D = {$oldDayKf} < " . self::THRESH_DAY_OLD . ")";
             }
-        } elseif ($btcHourStrong) {
-            if ($trigger15mReady) {
-                $text = "⚡️ <b>ВХОД РАЗРЕШЕН: СКАЛЬПИНГ НА 15M!</b>\n(1H одобрен + Боты BTC/ETH одновременно)";
-                $enter = true;
-            } else {
-                $text = "⏸ ЗАБОР (ЖДЕМ СИНХРОНИЗАЦИИ)\n(Час сильный, но 15m импульса нет)";
-            }
+
+        } elseif ($btcHourStrong && $trigger15mReady) {
+            // День слабый, но час + 15m совпали → 15m
+            $text = "⚡️ <b>ВХОД РАЗРЕШЕН: СКАЛЬПИНГ 15M!</b>\n(час + 15m подтвердили)";
+            $enter = true;
+            $mode  = '15m';
+
         } else {
-            $text = "❌ НЕ ТОРГУЕМ\n(Старшие фильтры BTC 1D и 1H слабые)";
+            $text = "❌ НЕ ТОРГУЕМ\n(день слабый, час или 15m не подтвердили)";
         }
 
-        return ['enter' => $enter, 'text' => $text];
+        return ['enter' => $enter, 'text' => $text, 'mode' => $mode];
     }
 
     private function fetchCandles(): ?array
@@ -490,9 +521,10 @@ class TradingBotService
         );
     }
 
-    private function openTrade(array $candles, float $prob): array
+    private function openTrade(array $candles, float $prob, string $mode = '15m'): array
     {
-        $symbol = self::TRADE_SYMBOL;
+        $symbol   = self::TRADE_SYMBOL;
+        $leverage = self::LEVERAGE_BY_MODE[$mode] ?? 50;
 
         $posCheck = $this->binance->getPosition($symbol);
         if (!$posCheck['success']) {
@@ -503,13 +535,41 @@ class TradingBotService
             return ['success' => false, 'error' => 'Позиция уже открыта. Новая не нужна.'];
         }
 
+        // ==== АНТИ-ПЕРЕКРЫТИЕ по режиму ====
+        $cooldownSec = self::MODE_COOLDOWN_SEC[$mode] ?? 0;
+        if ($cooldownSec > 0) {
+            $lastClosed = Trade::where('symbol', $symbol)
+                ->where('mode', $mode)
+                ->whereNotNull('closed_at')
+                ->orderByDesc('closed_at')
+                ->first();
+
+            if ($lastClosed) {
+                $elapsed = now('UTC')->diffInSeconds($lastClosed->closed_at, true);
+                if ($elapsed < $cooldownSec) {
+                    $wait = $cooldownSec - $elapsed;
+                    $mins = round($wait / 60);
+                    Log::info('[TradingBot] anti-overlap blocked', [
+                        'mode'       => $mode,
+                        'last_close' => $lastClosed->closed_at,
+                        'elapsed_s'  => $elapsed,
+                        'cooldown'   => $cooldownSec,
+                    ]);
+                    return [
+                        'success' => false,
+                        'error'   => "Анти-перекрытие: {$mode} закрыта {$elapsed}с назад, ждать ещё {$mins} мин",
+                    ];
+                }
+            }
+        }
+
         $priceRes = $this->binance->getPrice($symbol);
         if (!$priceRes['success']) {
             return ['success' => false, 'error' => 'price: ' . $priceRes['error']];
         }
 
         $currentPrice = $priceRes['price'];
-        $notional     = self::MARGIN * self::LEVERAGE;
+        $notional     = self::MARGIN * $leverage;
         $quantity     = $notional / $currentPrice;
 
         $info = $this->binance->getExchangeInfo($symbol);
@@ -528,7 +588,7 @@ class TradingBotService
             return ['success' => false, 'error' => 'Позиция меньше минимального номинала'];
         }
 
-        $this->binance->setLeverage($symbol, self::LEVERAGE);
+        $this->binance->setLeverage($symbol, $leverage);
         $this->binance->setMarginType($symbol, 'ISOLATED');
 
         $order = $this->binance->openShort($symbol, $quantity);
@@ -538,11 +598,18 @@ class TradingBotService
         $entryPrice = (float)$order['data']['avgPrice'];
 
         $decimals = (int)abs(log10($tickSize));
+
+        // SL — одинаковый для всех режимов
         $slPrice  = round($entryPrice * (1 + self::SL_PERCENT / 100) / $tickSize) * $tickSize;
         $slPrice  = number_format($slPrice, $decimals, '.', '');
 
-        $trailActivatePrice = round($entryPrice * (1 - self::TRAIL_ACTIVATE_PERCENT / 100) / $tickSize) * $tickSize;
+        // Trailing по режиму
+        $trailParams = self::TRAIL_PARAMS[$mode] ?? self::TRAIL_PARAMS['15m'];
+        $trailActivatePrice = round(
+            $entryPrice * (1 - $trailParams['activate'] / 100) / $tickSize
+        ) * $tickSize;
         $trailActivatePrice = number_format($trailActivatePrice, $decimals, '.', '');
+        $trailCallbackRate  = $trailParams['callback'];
 
         $this->binance->cancelAllAlgoOrders($symbol);
 
@@ -551,7 +618,7 @@ class TradingBotService
             $symbol,
             $quantity,
             $trailActivatePrice,
-            self::TRAIL_CALLBACK_RATE
+            $trailCallbackRate
         );
 
         if (!$slResult['success']) {
@@ -566,24 +633,32 @@ class TradingBotService
             'side'        => 'SHORT',
             'entry_price' => $entryPrice,
             'quantity'    => $quantity,
-            'leverage'    => self::LEVERAGE,
+            'leverage'    => $leverage,
             'stop_loss'   => (float)$slPrice,
             'take_profit' => (float)$trailActivatePrice,
             'status'      => 'open',
             'opened_at'   => now('UTC'),
+            'mode'        => $mode,
         ]);
 
         $probPct = round($prob * 100, 1);
+        $modeLabel = match($mode) {
+            '1d'  => 'ПО ДНЮ',
+            '1h'  => 'НА 1 ЧАС',
+            '15m' => 'НА 15 МИН',
+            default => $mode,
+        };
+
         $this->telegram->send(
-            "✅ <b>ШОРТ ОТКРЫТ</b>\n" .
+            "✅ <b>ШОРТ ОТКРЫТ ({$modeLabel})</b>\n" .
             "Символ: {$symbol}\n" .
             "Модель: <b>{$probPct}%</b> вероятность TP\n" .
             "Цена входа: $" . number_format($entryPrice, 2) . "\n" .
             "Количество: {$quantity} BTC\n" .
-            "Плечо: " . self::LEVERAGE . "x\n" .
+            "Плечо: {$leverage}x\n" .
             "SL: $" . number_format((float)$slPrice, 2) . " (+" . self::SL_PERCENT . "%)\n" .
             "Trailing: активация $" . number_format((float)$trailActivatePrice, 2) .
-            " (-" . self::TRAIL_ACTIVATE_PERCENT . "%), откат " . self::TRAIL_CALLBACK_RATE . "%"
+            " (-" . $trailParams['activate'] . "%), откат " . $trailCallbackRate . "%"
         );
 
         return [
@@ -592,6 +667,8 @@ class TradingBotService
             'quantity'    => $quantity,
             'sl'          => $slPrice,
             'tp'          => $trailActivatePrice,
+            'mode'        => $mode,
+            'leverage'    => $leverage,
         ];
     }
 }

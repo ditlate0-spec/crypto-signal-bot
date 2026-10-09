@@ -89,7 +89,7 @@ foreach ($TASKS as $task) {
         }
 
         // Небольшая пауза, чтобы не ловить rate limit
-        usleep(120000); // 120ms
+        usleep(220000); // 120ms
     }
 
     file_put_contents($file, json_encode($all));

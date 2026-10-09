@@ -9,10 +9,11 @@ class Trade extends Model
     protected $table = 'trades';
     public $timestamps = false;
 
-    protected $fillable = [
-        'symbol', 'side', 'entry_price', 'quantity', 'leverage',
-        'stop_loss', 'take_profit', 'status', 'opened_at', 'closed_at', 'pnl',
-    ];
+protected $fillable = [
+    'symbol', 'side', 'entry_price', 'quantity', 'leverage',
+    'stop_loss', 'take_profit', 'status', 'opened_at', 'closed_at', 'pnl',
+    'mode',   // ⬅️
+];
 
     protected $casts = [
         'entry_price'  => 'float',
